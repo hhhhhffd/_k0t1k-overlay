@@ -114,12 +114,20 @@ public final class Overlay implements Function<Object[], Object> {
      */
     @Override
     public Object apply(Object[] call) {
-        if (broken) {
-            return null;
-        }
         String method = (String) call[1];
         Object[] args = (Object[]) call[2];
         boolean exit = call.length == 4;
+        if (broken) {
+            // Even disabled, the Vulkan objects made on the game's swapchains and device must go with them.
+            if (vk != null && ("vkDestroySwapchainKHR".equals(method) || "vkDestroyDevice".equals(method))) {
+                try {
+                    vk.call(method, args, null, false);
+                } catch (Throwable e) {
+                    report(e);
+                }
+            }
+            return null;
+        }
         try {
             switch (method) {
                 case "glfwSwapBuffers":
@@ -167,7 +175,8 @@ public final class Overlay implements Function<Object[], Object> {
                 default:
                     return null;
             }
-        } catch (RuntimeException | LinkageError | ReflectiveOperationException e) {
+        } catch (Throwable e) {
+            // Errors too (e.g. LWJGL's "Out of stack space"): the advice would drop them silently.
             fail(e);
             return null;
         }
@@ -411,6 +420,9 @@ public final class Overlay implements Function<Object[], Object> {
         }
         if (!open && !options.hud && toasts.isEmpty()) {
             return false; // nothing on screen, so the game's frame stays untouched
+        }
+        if (!platform.hasWindow()) {
+            return false; // no window seen yet
         }
         platform.sizes(sizes);
         if (width <= 0 || height <= 0 || sizes[2] <= 0) {

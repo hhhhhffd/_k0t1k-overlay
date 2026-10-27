@@ -37,8 +37,11 @@ final class SdlPlatform implements SdlBackend {
     private static final int BUTTON_DOWN = 0x401;
     private static final int BUTTON_UP = 0x402;
     private static final int WHEEL = 0x403;
-    /** SDL_EVENT_USER: in none of the game's event switches, so a rewritten event is dropped. */
-    private static final int IGNORED = 0x8000;
+    /**
+     * SDL_EVENT_LAST: in none of the game's event switches, so a rewritten event is dropped. Unlike
+     * SDL_EVENT_USER it is never handed out by SDL_RegisterEvents, so it cannot pose as a custom event.
+     */
+    private static final int IGNORED = 0xffff;
 
     private static final int KMOD_SHIFT = 0x0003;
     private static final int KMOD_CTRL = 0x00c0;
@@ -51,6 +54,8 @@ final class SdlPlatform implements SdlBackend {
     private boolean savedRelative;
     private boolean pendingRelative;
     private boolean pendingText;
+    /** The game call the overlay just skipped; its exit hook reports success instead of SDL's false. */
+    private String skipped;
 
     SdlPlatform(Overlay overlay) {
         this.overlay = overlay;
@@ -58,17 +63,28 @@ final class SdlPlatform implements SdlBackend {
 
     @Override
     public Object call(String method, Object[] args, Object result, boolean exit) {
+        if ("SDL_PollEvent".equals(method)) {
+            // SDL_PollEvent(NULL) only asks whether events are pending.
+            return exit && Boolean.TRUE.equals(result) && args[0] != null ? onEvent((SDL_Event) args[0]) : null;
+        }
+        if (exit) {
+            if (method.equals(skipped)) {
+                skipped = null;
+                return Boolean.TRUE;
+            }
+            return null;
+        }
+        if (args.length > 0 && args[0] instanceof Long && (Long) args[0] != 0) {
+            window = (Long) args[0];
+        }
         switch (method) {
             case "SDL_GL_SwapWindow":
-                window = (Long) args[0];
                 overlay.glFrame();
                 return null;
-            case "SDL_PollEvent":
-                return exit && Boolean.TRUE.equals(result) ? onEvent((SDL_Event) args[0]) : null;
             case "SDL_SetWindowRelativeMouseMode":
                 if (holdBack()) {
                     pendingRelative = (Boolean) args[1];
-                    return Boolean.TRUE;
+                    return skip(method);
                 }
                 return null;
             case "SDL_WarpMouseInWindow":
@@ -77,12 +93,17 @@ final class SdlPlatform implements SdlBackend {
             case "SDL_StopTextInput":
                 if (holdBack()) {
                     pendingText = "SDL_StartTextInput".equals(method);
-                    return Boolean.TRUE;
+                    return skip(method);
                 }
                 return null;
             default:
                 return null;
         }
+    }
+
+    private Object skip(String method) {
+        skipped = method;
+        return Boolean.TRUE;
     }
 
     private boolean holdBack() {
@@ -206,6 +227,11 @@ final class SdlPlatform implements SdlBackend {
             default:
                 return button;
         }
+    }
+
+    @Override
+    public boolean hasWindow() {
+        return window != 0;
     }
 
     @Override

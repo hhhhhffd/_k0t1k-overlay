@@ -58,6 +58,9 @@ public final class Agent {
     private static final ElementMatcher<MethodDescription> EXIT = namedOneOf(
             "glfwGetKey", "glfwGetMouseButton",
             "SDL_PollEvent",
+            // A held-back call reports success, as SDL would have.
+            "SDL_SetWindowRelativeMouseMode", "SDL_StartTextInput", "SDL_StopTextInput",
+            "vkQueuePresentKHR",
             "vkCreateSwapchainKHR", "vkGetDeviceQueue", "vkGetDeviceQueue2");
 
     private Agent() {

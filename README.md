@@ -65,8 +65,11 @@ back a page at a time.
 | Minecraft 26.3+ | SDL3 | OpenGL or Vulkan | Vulkan |
 | VulkanMod (Fabric) | GLFW | Vulkan | 0.6.8 on 1.21.11 |
 
-The Vulkan runs were checked with the Khronos validation layer loaded and reported no messages. They
-were on lavapipe (Mesa's software Vulkan) under Xvfb. On SDL, OpenGL is not tested in game: Xvfb has
+The Vulkan runs were on lavapipe (Mesa's software Vulkan) under Xvfb. They were checked with the
+Khronos validation layer, synchronization validation included, while opening the overlay, typing
+(atlas uploads) and resizing the window (swapchain recreation). The layer reported nothing that came
+from the overlay. VulkanMod's own errors were reported both with and without it. If a game presents
+on a queue family without graphics support, the overlay logs that once and draws nothing. On SDL, OpenGL is not tested in game: Xvfb has
 no sRGB-capable GLX visual, so 26.3 cannot create its OpenGL window there. The parts are tested
 separately: SDL input on 26.3 with Vulkan, and the GL renderer on GLFW.
 

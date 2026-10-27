@@ -50,6 +50,11 @@ final class GlfwPlatform implements Platform {
     }
 
     @Override
+    public boolean hasWindow() {
+        return window != 0;
+    }
+
+    @Override
     public boolean hasGlContext() {
         return glfwGetCurrentContext() != 0;
     }
@@ -192,7 +197,7 @@ final class GlfwPlatform implements Platform {
         }
         try {
             return handler.handle();
-        } catch (RuntimeException | LinkageError e) {
+        } catch (Throwable e) {
             overlay.fail(e);
             return false;
         }

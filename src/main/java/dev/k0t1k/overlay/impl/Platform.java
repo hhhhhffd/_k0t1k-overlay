@@ -2,6 +2,9 @@ package dev.k0t1k.overlay.impl;
 
 /** What the overlay needs from the window library the game uses. */
 interface Platform {
+    /** Whether the game's window is known yet; nothing else may be called before. */
+    boolean hasWindow();
+
     /** Whether the game's OpenGL context is current on this thread (false under Vulkan). */
     boolean hasGlContext();
 

@@ -39,6 +39,15 @@ final class VkRenderer implements VulkanBackend {
     private final Map<Long, Integer> queueFamilies = new HashMap<>();
     private final Map<Long, Swapchain> swapchains = new HashMap<>();
     private Device device;
+    /** Families of the game's device that can run graphics work, by queue family index. */
+    private boolean[] graphicsFamilies;
+    /**
+     * The game's present info as it was before the overlay pointed it at its own semaphore, so the
+     * exit hook can put it back in case the game reuses the struct for its next present.
+     */
+    private long rewrittenInfo;
+    private long originalWaits;
+    private int originalWaitCount;
 
     VkRenderer(Overlay overlay) {
         this.overlay = overlay;
@@ -73,7 +82,9 @@ final class VkRenderer implements VulkanBackend {
                 deviceDestroyed((VkDevice) args[0]);
                 return null;
             case "vkQueuePresentKHR":
-                if (!disabled) {
+                if (exit) {
+                    restorePresent((VkPresentInfoKHR) args[1]);
+                } else if (!disabled) {
                     present((VkQueue) args[0], (VkPresentInfoKHR) args[1]);
                 }
                 return null;
@@ -161,6 +172,7 @@ final class VkRenderer implements VulkanBackend {
             }
             device.destroy();
             device = null;
+            graphicsFamilies = null;
         }
         swapchains.values().removeIf(s -> s.device.address() == vkDevice.address());
     }
@@ -191,6 +203,9 @@ final class VkRenderer implements VulkanBackend {
         if (!overlay.buildFrame(swapchain.width, swapchain.height)) {
             return;
         }
+        if (!canDrawOn(queue.getDevice(), family)) {
+            return; // a present-only queue family cannot run the overlay's render pass
+        }
         if (device == null) {
             device = new Device(queue.getDevice(), family);
             overlay.setRendererName(device.name);
@@ -200,8 +215,48 @@ final class VkRenderer implements VulkanBackend {
         if (swapchain.views == null) {
             device.prepare(swapchain);
         }
-        device.draw(queue, swapchain, image, info, overlay.batch());
+        long waits = info.address() + VkPresentInfoKHR.PWAITSEMAPHORES;
+        long count = info.address() + VkPresentInfoKHR.WAITSEMAPHORECOUNT;
+        long beforeWaits = MemoryUtil.memGetAddress(waits);
+        int beforeCount = MemoryUtil.memGetInt(count);
+        if (device.draw(queue, swapchain, image, info, overlay.batch())) {
+            rewrittenInfo = info.address();
+            originalWaits = beforeWaits;
+            originalWaitCount = beforeCount;
+        }
     }
+
+    private void restorePresent(VkPresentInfoKHR info) {
+        if (rewrittenInfo == 0 || rewrittenInfo != info.address()) {
+            return;
+        }
+        MemoryUtil.memPutAddress(info.address() + VkPresentInfoKHR.PWAITSEMAPHORES, originalWaits);
+        MemoryUtil.memPutInt(info.address() + VkPresentInfoKHR.WAITSEMAPHORECOUNT, originalWaitCount);
+        rewrittenInfo = 0;
+    }
+
+    private boolean canDrawOn(VkDevice vkDevice, int family) {
+        if (graphicsFamilies == null) {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                java.nio.IntBuffer count = stack.mallocInt(1);
+                vkGetPhysicalDeviceQueueFamilyProperties(vkDevice.getPhysicalDevice(), count, null);
+                VkQueueFamilyProperties.Buffer families = VkQueueFamilyProperties.malloc(count.get(0), stack);
+                vkGetPhysicalDeviceQueueFamilyProperties(vkDevice.getPhysicalDevice(), count, families);
+                graphicsFamilies = new boolean[count.get(0)];
+                for (int i = 0; i < graphicsFamilies.length; i++) {
+                    graphicsFamilies[i] = (families.get(i).queueFlags() & VK_QUEUE_GRAPHICS_BIT) != 0;
+                }
+            }
+        }
+        boolean ok = family < graphicsFamilies.length && graphicsFamilies[family];
+        if (!ok && !warnedFamily) {
+            warnedFamily = true;
+            Overlay.log("the game presents on a queue without graphics support; the overlay is not drawn");
+        }
+        return ok;
+    }
+
+    private boolean warnedFamily;
 
     // ---- per device state ----
 
@@ -273,9 +328,15 @@ final class VkRenderer implements VulkanBackend {
         private final long commandPool;
         private final VkCommandBuffer[] commands = new VkCommandBuffer[FRAMES];
         private final long[] fences = new long[FRAMES];
+        /**
+         * Whether a slot's fence belongs to a submission. A fence that was reset for a submit that then
+         * failed is never signalled, so waiting on it would hang forever.
+         */
+        private final boolean[] submitted = new boolean[FRAMES];
+        /** One staging copy of the atlas per slot, so an upload never waits for the GPU. */
+        private final HostBuffer[] staging = new HostBuffer[FRAMES];
         private final HostBuffer[] vertices = new HostBuffer[FRAMES];
         private final HostBuffer indices;
-        private final HostBuffer staging;
         private final long atlasImage;
         private final long atlasMemory;
         private final long atlasView;
@@ -329,7 +390,6 @@ final class VkRenderer implements VulkanBackend {
                     int v = i * 4;
                     indices.mapped.putInt(v).putInt(v + 1).putInt(v + 2).putInt(v + 2).putInt(v + 3).putInt(v);
                 }
-                staging = new HostBuffer(this, (long) Batch.ATLAS * Batch.ATLAS, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
 
                 VkImageCreateInfo imageInfo = VkImageCreateInfo.calloc(stack)
                         .sType(VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO)
@@ -627,16 +687,26 @@ final class VkRenderer implements VulkanBackend {
 
         /** Waits until none of the overlay's frames is still running on the GPU. */
         void waitIdleFrames() {
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                check(vkWaitForFences(vk, stack.longs(fences), true, Long.MAX_VALUE), "vkWaitForFences");
+            for (int i = 0; i < FRAMES; i++) {
+                waitSlot(i);
             }
         }
 
-        void draw(VkQueue queue, Swapchain swapchain, int image, VkPresentInfoKHR present, Batch batch) {
-            int slot = (int) (frame++ % FRAMES);
-            long[] pass = pass(swapchain.format);
+        private void waitSlot(int slot) {
+            if (!submitted[slot]) {
+                return;
+            }
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 check(vkWaitForFences(vk, stack.longs(fences[slot]), true, Long.MAX_VALUE), "vkWaitForFences");
+            }
+        }
+
+        /** Records and submits the overlay over one swapchain image; true once the present was rewired. */
+        boolean draw(VkQueue queue, Swapchain swapchain, int image, VkPresentInfoKHR present, Batch batch) {
+            int slot = (int) (frame++ % FRAMES);
+            long[] pass = pass(swapchain.format);
+            waitSlot(slot);
+            try (MemoryStack stack = MemoryStack.stackPush()) {
 
                 int bytes = batch.vertices.limit();
                 if (vertices[slot] == null || vertices[slot].size < bytes) {
@@ -655,7 +725,7 @@ final class VkRenderer implements VulkanBackend {
                 check(vkBeginCommandBuffer(cmd, begin), "vkBeginCommandBuffer");
 
                 if (batch.atlasDirty() || !atlasReady) {
-                    uploadAtlas(stack, cmd, batch);
+                    uploadAtlas(stack, cmd, batch, slot);
                 }
 
                 VkClearValue.Buffer noClear = VkClearValue.calloc(1, stack);
@@ -716,23 +786,32 @@ final class VkRenderer implements VulkanBackend {
                             .pWaitSemaphores(present.pWaitSemaphores())
                             .pWaitDstStageMask(stages);
                 }
+                submitted[slot] = false;
                 check(vkResetFences(vk, stack.longs(fences[slot])), "vkResetFences");
                 check(vkQueueSubmit(queue, submit, fences[slot]), "vkQueueSubmit");
+                submitted[slot] = true;
                 // Persistent memory: the present reads it after this hook has returned.
                 swapchain.waits[image].put(0, swapchain.done[image]);
                 present.pWaitSemaphores(swapchain.waits[image]);
+                return true;
             }
         }
 
-        private void uploadAtlas(MemoryStack stack, VkCommandBuffer cmd, Batch batch) {
-            // The staging copy may still be read by a frame in flight.
-            waitIdleFrames();
-            MemoryUtil.memCopy(memAddress(batch.atlas, 0), memAddress(staging.mapped, 0), (long) Batch.ATLAS * Batch.ATLAS);
+        private void uploadAtlas(MemoryStack stack, VkCommandBuffer cmd, Batch batch, int slot) {
+            // This slot's staging buffer is free: its last frame finished before draw went on.
+            if (staging[slot] == null) {
+                staging[slot] = new HostBuffer(this, (long) Batch.ATLAS * Batch.ATLAS, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            }
+            HostBuffer stage = staging[slot];
             int x0 = atlasReady ? batch.dirty[0] : 0;
             int y0 = atlasReady ? batch.dirty[1] : 0;
             int x1 = atlasReady ? batch.dirty[2] : Batch.ATLAS;
             int y1 = atlasReady ? batch.dirty[3] : Batch.ATLAS;
             batch.atlasUploaded();
+            // Only the changed rows; the copy below reads just the dirty rectangle within them.
+            long offset = (long) y0 * Batch.ATLAS;
+            MemoryUtil.memCopy(memAddress(batch.atlas, 0) + offset, memAddress(stage.mapped, 0) + offset,
+                    (long) (y1 - y0) * Batch.ATLAS);
 
             VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack);
             barrier.get(0)
@@ -756,7 +835,7 @@ final class VkRenderer implements VulkanBackend {
             region.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1);
             region.get(0).imageOffset().set(x0, y0, 0);
             region.get(0).imageExtent().set(x1 - x0, y1 - y0, 1);
-            vkCmdCopyBufferToImage(cmd, staging.buffer, atlasImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
+            vkCmdCopyBufferToImage(cmd, stage.buffer, atlasImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
 
             barrier.get(0)
                     .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT)
@@ -793,9 +872,11 @@ final class VkRenderer implements VulkanBackend {
             vkDestroyImageView(vk, atlasView, null);
             vkDestroyImage(vk, atlasImage, null);
             vkFreeMemory(vk, atlasMemory, null);
-            staging.destroy(vk);
             indices.destroy(vk);
             for (int i = 0; i < FRAMES; i++) {
+                if (staging[i] != null) {
+                    staging[i].destroy(vk);
+                }
                 if (vertices[i] != null) {
                     vertices[i].destroy(vk);
                 }
