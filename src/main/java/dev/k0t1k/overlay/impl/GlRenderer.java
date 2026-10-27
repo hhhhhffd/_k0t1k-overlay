@@ -3,7 +3,6 @@ package dev.k0t1k.overlay.impl;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.IntBuffer;
-import java.util.ArrayDeque;
 
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GLCapabilities;
@@ -22,13 +21,13 @@ import static org.lwjgl.opengl.GL21.GL_PIXEL_UNPACK_BUFFER_BINDING;
 import static org.lwjgl.opengl.GL30.*;
 
 /**
- * A tiny batched 2D renderer on OpenGL 3.2 core: rounded rectangles (signed distance in the fragment
- * shader) and glyphs from a single-channel atlas, all in framebuffer pixels.
+ * Draws a {@link Batch} with OpenGL 3.2 core (or a compatibility context of at least 3.2): rounded
+ * rectangles as a signed distance in the fragment shader, glyphs from a single-channel atlas.
  *
  * <p>Minecraft caches GL state in {@code GlStateManager}, so every piece of state touched here is read
- * in {@link #begin} and put back in {@link #end}; otherwise the game would render with wrong state.
+ * before drawing and put back afterwards; otherwise the game would render with wrong state.
  */
-final class Gl {
+final class GlRenderer {
     private static final String VERTEX = "#version 150\n"
             + "uniform vec2 uViewport;\n"
             + "in vec2 aPos; in vec2 aUv; in vec4 aColor; in vec4 aParams;\n"
@@ -53,21 +52,16 @@ final class Gl {
             + "  fragColor = vec4(vColor.rgb, vColor.a * clamp(0.5 - d, 0.0, 1.0));\n"
             + "}\n";
 
-    private static final int STRIDE = (2 + 2 + 4) * 4 + 4; // pos, uv, params as floats + RGBA bytes
-    private static final int MAX_QUADS = 16384;
+    private static final int STRIDE = Batch.STRIDE;
+    private static final int MAX_QUADS = Batch.MAX_QUADS;
 
     private final int program;
     private final int uViewport;
     private final int vao;
     private final int vbo;
     private final int ebo;
-    final int atlas;
+    private final int atlas;
     private final boolean samplers;
-    private final ByteBuffer vertices =
-            ByteBuffer.allocateDirect(MAX_QUADS * 4 * STRIDE).order(ByteOrder.nativeOrder());
-    private int quads;
-    private final ArrayDeque<int[]> clips = new ArrayDeque<>();
-    private int width;
     private int height;
 
     private final IntBuffer ints = ByteBuffer.allocateDirect(16 * 4).order(ByteOrder.nativeOrder()).asIntBuffer();
@@ -79,7 +73,7 @@ final class Gl {
     /** A compatibility context (Minecraft 1.13-1.16), where fixed-function alpha testing still applies. */
     private final boolean legacy;
 
-    Gl(int atlasSize) {
+    GlRenderer() {
         GLCapabilities caps = GL.getCapabilities();
         samplers = caps.OpenGL33 || caps.GL_ARB_sampler_objects;
         legacy = !caps.OpenGL32
@@ -93,7 +87,6 @@ final class Gl {
             glBindVertexArray(vao);
             vbo = glGenBuffers();
             glBindBuffer(GL_ARRAY_BUFFER, vbo);
-            glBufferData(GL_ARRAY_BUFFER, vertices.capacity(), GL_STREAM_DRAW);
             int pos = glGetAttribLocation(program, "aPos");
             int uv = glGetAttribLocation(program, "aUv");
             int params = glGetAttribLocation(program, "aParams");
@@ -128,8 +121,8 @@ final class Gl {
             // The game leaves its own unpack state behind; with a large row length the upload would read
             // past the end of our buffer.
             resetUnpack();
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, atlasSize, atlasSize, 0, GL_RED, GL_UNSIGNED_BYTE,
-                    ByteBuffer.allocateDirect(atlasSize * atlasSize));
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, Batch.ATLAS, Batch.ATLAS, 0, GL_RED, GL_UNSIGNED_BYTE,
+                    (ByteBuffer) null);
 
             glUseProgram(program);
             glUniform1i(glGetUniformLocation(program, "uAtlas"), 0);
@@ -163,41 +156,61 @@ final class Gl {
         return program;
     }
 
-    /** Starts a frame on the default framebuffer of {@code width} x {@code height} pixels. */
-    void begin(int width, int height) {
-        this.width = width;
-        this.height = height;
+    /** Draws the batch over the default framebuffer. */
+    void draw(Batch batch) {
+        height = batch.height;
         saveState();
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-        glViewport(0, 0, width, height);
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
-        glDisable(GL_STENCIL_TEST);
-        glDisable(GL_SCISSOR_TEST);
-        glDisable(GL_COLOR_LOGIC_OP);
-        glDisable(GL_POLYGON_OFFSET_FILL);
-        glEnable(GL_BLEND);
-        glBlendEquation(GL_FUNC_ADD);
-        // Leave destination alpha alone: some compositors use the window's alpha channel.
-        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
-        glColorMask(true, true, true, true);
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-        glUseProgram(program);
-        glUniform2f(uViewport, width, height);
-        glBindVertexArray(vao);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, atlas);
-        if (samplers) {
-            org.lwjgl.opengl.GL33.glBindSampler(0, 0);
+        try {
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            glViewport(0, 0, batch.width, batch.height);
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_CULL_FACE);
+            glDisable(GL_STENCIL_TEST);
+            glDisable(GL_SCISSOR_TEST);
+            glDisable(GL_COLOR_LOGIC_OP);
+            glDisable(GL_POLYGON_OFFSET_FILL);
+            glEnable(GL_BLEND);
+            glBlendEquation(GL_FUNC_ADD);
+            // Leave destination alpha alone: some compositors use the window's alpha channel.
+            glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+            glColorMask(true, true, true, true);
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            if (legacy) {
+                glDisable(GL_ALPHA_TEST);
+            }
+            glUseProgram(program);
+            glUniform2f(uViewport, batch.width, batch.height);
+            glBindVertexArray(vao);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, atlas);
+            if (samplers) {
+                org.lwjgl.opengl.GL33.glBindSampler(0, 0);
+            }
+            resetUnpack();
+            if (batch.atlasDirty()) {
+                int[] d = batch.dirty;
+                glPixelStorei(GL_UNPACK_ROW_LENGTH, Batch.ATLAS);
+                ByteBuffer region = batch.atlas.duplicate();
+                region.position(d[1] * Batch.ATLAS + d[0]);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, d[0], d[1], d[2] - d[0], d[3] - d[1], GL_RED, GL_UNSIGNED_BYTE, region);
+                glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+                batch.atlasUploaded();
+            }
+            // A fresh store each time, so the driver does not wait for the previous draw.
+            glBufferData(GL_ARRAY_BUFFER, batch.vertices, GL_STREAM_DRAW);
+            for (Batch.Draw d : batch.draws) {
+                if (d.clip == null) {
+                    glDisable(GL_SCISSOR_TEST);
+                } else {
+                    glEnable(GL_SCISSOR_TEST);
+                    glScissor(d.clip[0], height - d.clip[3], d.clip[2] - d.clip[0], d.clip[3] - d.clip[1]);
+                }
+                glDrawElements(GL_TRIANGLES, d.quads * 6, GL_UNSIGNED_INT, (long) d.firstQuad * 6 * 4);
+            }
+        } finally {
+            restoreState();
         }
-        resetUnpack();
-        if (legacy) {
-            glDisable(GL_ALPHA_TEST);
-        }
-        clips.clear();
-        quads = 0;
-        vertices.clear();
     }
 
     private static void resetUnpack() {
@@ -206,103 +219,6 @@ final class Gl {
         glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
         glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-    }
-
-    void end() {
-        try {
-            flush();
-        } finally {
-            restoreState();
-        }
-    }
-
-    /** Uploads a glyph bitmap into the atlas; the atlas texture is bound while a frame is open. */
-    void uploadGlyph(int x, int y, int w, int h, ByteBuffer pixels) {
-        glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, GL_RED, GL_UNSIGNED_BYTE, pixels);
-    }
-
-    /** Restricts drawing to a rectangle (framebuffer pixels), intersected with the enclosing clip. */
-    void pushClip(float x, float y, float w, float h) {
-        int x0 = (int) Math.floor(x);
-        int y0 = (int) Math.floor(y);
-        int x1 = (int) Math.ceil(x + w);
-        int y1 = (int) Math.ceil(y + h);
-        int[] outer = clips.peek();
-        if (outer != null) {
-            x0 = Math.max(x0, outer[0]);
-            y0 = Math.max(y0, outer[1]);
-            x1 = Math.min(x1, outer[2]);
-            y1 = Math.min(y1, outer[3]);
-        }
-        flush();
-        clips.push(new int[] {x0, y0, Math.max(x0, x1), Math.max(y0, y1)});
-        applyClip();
-    }
-
-    void popClip() {
-        flush();
-        clips.pop();
-        applyClip();
-    }
-
-    private void applyClip() {
-        int[] clip = clips.peek();
-        if (clip == null) {
-            glDisable(GL_SCISSOR_TEST);
-        } else {
-            glEnable(GL_SCISSOR_TEST);
-            glScissor(clip[0], height - clip[3], clip[2] - clip[0], clip[3] - clip[1]);
-        }
-    }
-
-    void rect(float x, float y, float w, float h, int argb) {
-        roundRect(x, y, w, h, 0, argb);
-    }
-
-    void roundRect(float x, float y, float w, float h, float radius, int argb) {
-        if (w <= 0 || h <= 0 || (argb >>> 24) == 0) {
-            return;
-        }
-        float hw = w / 2;
-        float hh = h / 2;
-        float r = Math.min(radius, Math.min(hw, hh));
-        // Grow by half a pixel so the anti-aliased edge is not cut off.
-        float g = 0.5f;
-        quad(x - g, y - g, x + w + g, y + h + g, -hw - g, -hh - g, hw + g, hh + g, hw, hh, r, 0, argb);
-    }
-
-    void glyph(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, int argb) {
-        quad(x0, y0, x1, y1, u0, v0, u1, v1, 0, 0, 0, 1, argb);
-    }
-
-    private void quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1,
-            float hw, float hh, float radius, float mode, int argb) {
-        if (quads == MAX_QUADS) {
-            flush();
-        }
-        vertex(x0, y0, u0, v0, hw, hh, radius, mode, argb);
-        vertex(x1, y0, u1, v0, hw, hh, radius, mode, argb);
-        vertex(x1, y1, u1, v1, hw, hh, radius, mode, argb);
-        vertex(x0, y1, u0, v1, hw, hh, radius, mode, argb);
-        quads++;
-    }
-
-    private void vertex(float x, float y, float u, float v, float hw, float hh, float radius, float mode, int argb) {
-        vertices.putFloat(x).putFloat(y).putFloat(u).putFloat(v)
-                .putFloat(hw).putFloat(hh).putFloat(radius).putFloat(mode)
-                .put((byte) (argb >> 16)).put((byte) (argb >> 8)).put((byte) argb).put((byte) (argb >>> 24));
-    }
-
-    private void flush() {
-        if (quads == 0) {
-            return;
-        }
-        vertices.flip();
-        // A fresh store each time, so the driver does not wait for the previous draw.
-        glBufferData(GL_ARRAY_BUFFER, vertices, GL_STREAM_DRAW);
-        glDrawElements(GL_TRIANGLES, quads * 6, GL_UNSIGNED_INT, 0);
-        vertices.clear();
-        quads = 0;
     }
 
     private int get(int name) {

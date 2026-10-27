@@ -50,6 +50,11 @@ final class GlfwPlatform implements Platform {
     }
 
     @Override
+    public boolean hasGlContext() {
+        return glfwGetCurrentContext() != 0;
+    }
+
+    @Override
     public void sizes(int[] out) {
         glfwGetFramebufferSize(window, w, h);
         out[0] = w.get(0);
@@ -111,13 +116,13 @@ final class GlfwPlatform implements Platform {
         }
     }
 
-    /** Hook on {@code glfwSetInputMode}: returns 1 to skip the game's call. */
-    int onInputMode(int mode, int value) {
+    /** Hook on {@code glfwSetInputMode}: returns true to skip the game's call. */
+    boolean onInputMode(int mode, int value) {
         if (mode != GLFW_CURSOR || ownCursorCall || !overlay.isOpen()) {
-            return 0;
+            return false;
         }
         pendingMode = value;
-        return 1;
+        return true;
     }
 
     /**

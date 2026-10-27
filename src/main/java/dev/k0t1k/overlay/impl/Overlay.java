@@ -13,28 +13,26 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.function.BooleanSupplier;
-import java.util.function.IntBinaryOperator;
-import java.util.function.BiFunction;
-import java.util.function.LongConsumer;
+import java.util.function.Function;
 
-import org.lwjgl.glfw.GLFW;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11;
 
 /**
  * The overlay: opened with Shift+Tab over the running game, like the Steam overlay. It owns the
- * render-thread state and is driven by the agent's hooks: {@link #onSwap} once per frame and the
- * input methods from {@link GlfwPlatform}'s wrapped callbacks.
+ * render-thread state and is driven by the agent's hooks through {@link #apply}: a frame hook of the
+ * window library or of Vulkan builds a {@link Batch} once per frame and a renderer for the game's
+ * graphics API draws it; the window library's input reaches the key, button and cursor methods.
  */
-public final class Overlay {
-    private static final int ATLAS = 2048;
+public final class Overlay implements Function<Object[], Object> {
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm");
     private static final String[] TABS = {"tab.chat", "tab.notes", "tab.perf"};
 
     private final Options options;
     private final Strings strings;
-    private final GlfwPlatform platform = new GlfwPlatform(this);
+    private final GlfwPlatform glfw = new GlfwPlatform(this);
+    /** The window library in use, known from the first hook it receives. */
+    private Platform platform = glfw;
     private final Perf perf = new Perf();
     private final long started = System.currentTimeMillis();
 
@@ -58,9 +56,12 @@ public final class Overlay {
     private final NotesView notesView;
     private final PerfView perfView;
 
-    private Gl gl;
+    private final Batch batch = new Batch();
     private Font.Atlas atlas;
     private Ui ui;
+    private GlRenderer gl;
+    private VulkanBackend vk;
+    private SdlBackend sdl;
     private boolean broken;
     private volatile boolean open;
     private int tab;
@@ -106,13 +107,88 @@ public final class Overlay {
         log("started, data in " + options.dataDir);
     }
 
-    /** The hooks the agent calls, as JDK types: {swap, wrap callback, is open, cursor mode}. */
-    public Object[] hooks() {
-        LongConsumer swap = this::onSwap;
-        BiFunction<String, Object, Object> wrap = platform::wrap;
-        BooleanSupplier isOpen = this::isOpen;
-        IntBinaryOperator inputMode = platform::onInputMode;
-        return new Object[] {swap, wrap, isOpen, inputMode};
+    /**
+     * Every hooked LWJGL call: {@code {class, method, arguments}} before it runs, with the return
+     * value appended after it. Answers as {@code Agent.Enter} and {@code Agent.Exit} expect: null to
+     * change nothing, new arguments, {@code Boolean.TRUE} to skip the call, or a new return value.
+     */
+    @Override
+    public Object apply(Object[] call) {
+        if (broken) {
+            return null;
+        }
+        String method = (String) call[1];
+        Object[] args = (Object[]) call[2];
+        boolean exit = call.length == 4;
+        try {
+            switch (method) {
+                case "glfwSwapBuffers":
+                    glfw.window = (Long) args[0];
+                    platform = glfw;
+                    glFrame();
+                    return null;
+                case "glfwSetInputMode":
+                    return glfw.onInputMode((Integer) args[1], (Integer) args[2]) ? Boolean.TRUE : null;
+                case "glfwGetKey":
+                case "glfwGetMouseButton":
+                    // Keys and buttons read as released while the overlay is open.
+                    return isOpen() ? Integer.valueOf(0) : null;
+                case "glfwSetKeyCallback":
+                case "glfwSetCharCallback":
+                case "glfwSetCharModsCallback":
+                case "glfwSetMouseButtonCallback":
+                case "glfwSetCursorPosCallback":
+                case "glfwSetScrollCallback": {
+                    glfw.window = (Long) args[0];
+                    platform = glfw;
+                    Object wrapped = args[1] == null ? null : glfw.wrap(method, args[1]);
+                    if (wrapped == args[1]) {
+                        return null;
+                    }
+                    Object[] replaced = args.clone();
+                    replaced[1] = wrapped;
+                    return replaced;
+                }
+                case "SDL_GL_SwapWindow":
+                case "SDL_PollEvent":
+                case "SDL_SetWindowRelativeMouseMode":
+                case "SDL_WarpMouseInWindow":
+                case "SDL_StartTextInput":
+                case "SDL_StopTextInput":
+                    platform = sdl();
+                    return sdl.call(method, args, exit ? call[3] : null, exit);
+                case "vkCreateSwapchainKHR":
+                case "vkDestroySwapchainKHR":
+                case "vkGetDeviceQueue":
+                case "vkGetDeviceQueue2":
+                case "vkQueuePresentKHR":
+                case "vkDestroyDevice":
+                    return vulkan().call(method, args, exit ? call[3] : null, exit);
+                default:
+                    return null;
+            }
+        } catch (RuntimeException | LinkageError | ReflectiveOperationException e) {
+            fail(e);
+            return null;
+        }
+    }
+
+    private SdlBackend sdl() throws ReflectiveOperationException {
+        if (sdl == null) {
+            sdl = (SdlBackend) Class.forName("dev.k0t1k.overlay.impl.SdlPlatform", true, Overlay.class.getClassLoader())
+                    .getDeclaredConstructor(Overlay.class)
+                    .newInstance(this);
+        }
+        return sdl;
+    }
+
+    private VulkanBackend vulkan() throws ReflectiveOperationException {
+        if (vk == null) {
+            vk = (VulkanBackend) Class.forName("dev.k0t1k.overlay.impl.VkRenderer", true, Overlay.class.getClassLoader())
+                    .getDeclaredConstructor(Overlay.class)
+                    .newInstance(this);
+        }
+        return vk;
     }
 
     private static java.util.concurrent.ThreadFactory daemon(String name) {
@@ -161,6 +237,9 @@ public final class Overlay {
                 e.printStackTrace();
             }
         }
+        if (vk != null) {
+            vk.disable();
+        }
     }
 
     boolean isOpen() {
@@ -201,9 +280,10 @@ public final class Overlay {
     // ---- input, from the wrapped GLFW callbacks; each returns true when the game must not see it ----
 
     boolean key(int key, int action, int mods) {
-        if (broken || ui == null) {
+        if (broken) {
             return false;
         }
+        ensureUi();
         boolean press = action != Keys.RELEASE;
         if (!press && !gameKeys.remove(key) && open) {
             // The game never saw this press (the overlay took it), so it must not see the release.
@@ -211,7 +291,7 @@ public final class Overlay {
         }
         if (press && key == Keys.TAB && (mods & Keys.MOD_SHIFT) != 0
                 && (mods & (Keys.MOD_CONTROL | Keys.MOD_ALT | Keys.MOD_SUPER)) == 0) {
-            if (action == GLFW.GLFW_PRESS) {
+            if (action == Keys.PRESS) {
                 setOpen(!open);
             }
             return true;
@@ -294,66 +374,86 @@ public final class Overlay {
 
     // ---- frame ----
 
-    private void onSwap(long window) {
-        if (broken) {
+    /** OpenGL: draws right before the window library presents the frame. */
+    void glFrame() {
+        if (!platform.hasGlContext()) {
+            buildFrame(0, 0); // no OpenGL here (e.g. Vulkan); keep the clock and queues going
             return;
         }
-        try {
-            perf.frame();
-            platform.window = window;
-            for (Runnable task; (task = renderQueue.poll()) != null; ) {
-                task.run();
-            }
-            if (GLFW.glfwGetCurrentContext() == 0) {
-                return; // no OpenGL here (e.g. Vulkan); nothing to draw into
-            }
-            long now = System.currentTimeMillis();
-            for (Iterator<Toast> it = toasts.iterator(); it.hasNext(); ) {
-                if (it.next().until < now) {
-                    it.remove();
-                }
-            }
-            if (!open && !options.hud && toasts.isEmpty()) {
-                return; // nothing on screen, so the game's frame stays untouched
-            }
-            if (gl == null) {
-                initGl();
-            }
-            platform.sizes(sizes);
-            if (sizes[0] <= 0 || sizes[1] <= 0 || sizes[2] <= 0) {
-                return; // minimised
-            }
-            pixelRatio = sizes[0] / (float) sizes[2];
-            // HiDPI: the larger of the OS scale and the framebuffer density, shrunk if the UI would not fit.
-            float scale = Math.max(platform.contentScale(), pixelRatio);
-            scale = Math.min(scale, Math.min(sizes[0] / 860f, sizes[1] / 480f));
-            ui.scale = Math.max(0.75f, scale);
-            if (atlas.full) {
-                atlas.reset();
-            }
-            gl.begin(sizes[0], sizes[1]);
-            try {
-                draw(sizes[0] / ui.scale, sizes[1] / ui.scale);
-            } finally {
-                gl.end();
-                ui.endFrame();
-            }
-        } catch (RuntimeException | LinkageError e) {
-            fail(e);
+        platform.sizes(sizes);
+        if (!buildFrame(sizes[0], sizes[1])) {
+            return;
         }
+        if (gl == null) {
+            // Throws without a context made current by the game; caught by apply.
+            GL.getCapabilities();
+            gl = new GlRenderer();
+            perfView.renderer = GL11.glGetString(GL11.GL_RENDERER) + " · OpenGL " + GL11.glGetString(GL11.GL_VERSION);
+        }
+        gl.draw(batch);
     }
 
-    private void initGl() {
-        // Throws without a context made current by the game; caught by onSwap.
-        GL.getCapabilities();
-        gl = new Gl(ATLAS);
-        atlas = new Font.Atlas(gl, ATLAS);
+    /**
+     * Runs once per frame on the render thread, whatever the graphics API: updates the frame clock,
+     * runs posted work and, when anything is on screen, fills {@link #batch} for a target of
+     * {@code width} x {@code height} pixels. Returns whether there is something to draw.
+     */
+    boolean buildFrame(int width, int height) {
+        perf.frame();
+        for (Runnable task; (task = renderQueue.poll()) != null; ) {
+            task.run();
+        }
+        long now = System.currentTimeMillis();
+        for (Iterator<Toast> it = toasts.iterator(); it.hasNext(); ) {
+            if (it.next().until < now) {
+                it.remove();
+            }
+        }
+        if (!open && !options.hud && toasts.isEmpty()) {
+            return false; // nothing on screen, so the game's frame stays untouched
+        }
+        platform.sizes(sizes);
+        if (width <= 0 || height <= 0 || sizes[2] <= 0) {
+            return false; // minimised, or no target
+        }
+        ensureUi();
+        ui.platform = platform;
+        pixelRatio = width / (float) sizes[2];
+        // HiDPI: the larger of the OS scale and the framebuffer density, shrunk if the UI would not fit.
+        float scale = Math.max(platform.contentScale(), pixelRatio);
+        scale = Math.min(scale, Math.min(width / 860f, height / 480f));
+        ui.scale = Math.max(0.75f, scale);
+        if (atlas.full) {
+            atlas.reset();
+        }
+        batch.begin(width, height);
         try {
-            ui = new Ui(gl, new Font("Inter-Regular.ttf", atlas), new Font("Inter-SemiBold.ttf", atlas), platform);
+            draw(width / ui.scale, height / ui.scale);
+        } finally {
+            batch.end();
+            ui.endFrame();
+        }
+        return !batch.empty();
+    }
+
+    Batch batch() {
+        return batch;
+    }
+
+    void setRendererName(String name) {
+        perfView.renderer = name;
+    }
+
+    private void ensureUi() {
+        if (ui != null) {
+            return;
+        }
+        atlas = new Font.Atlas(batch);
+        try {
+            ui = new Ui(batch, new Font("Inter-Regular.ttf", atlas), new Font("Inter-SemiBold.ttf", atlas), platform);
         } catch (IOException e) {
             throw new IllegalStateException(e);
         }
-        perfView.renderer = GL11.glGetString(GL11.GL_RENDERER) + " · OpenGL " + GL11.glGetString(GL11.GL_VERSION);
     }
 
     private void draw(float w, float h) {

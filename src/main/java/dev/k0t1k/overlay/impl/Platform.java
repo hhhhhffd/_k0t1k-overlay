@@ -2,6 +2,9 @@ package dev.k0t1k.overlay.impl;
 
 /** What the overlay needs from the window library the game uses. */
 interface Platform {
+    /** Whether the game's OpenGL context is current on this thread (false under Vulkan). */
+    boolean hasGlContext();
+
     /** Fills {framebuffer width, framebuffer height, window width, window height}. */
     void sizes(int[] out);
 

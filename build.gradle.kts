@@ -15,12 +15,33 @@ repositories {
 // would bind GL11 methods as GL30.glEnable etc., which 3.1 does not have.
 val lwjgl = "3.1.6"
 
+// Backends that only exist in newer games compile against the oldest LWJGL that has them, in their
+// own source sets, and are loaded by name, so the main code never links against them.
+// Vulkan: Minecraft 1.20+ (VulkanMod) and 26.2+ ship LWJGL 3.3.1 or newer.
+val lwjglVulkan = "3.3.1"
+// SDL: Minecraft 26.3+.
+val lwjglSdl = "3.4.3"
+
+sourceSets {
+    create("vulkan") {
+        compileClasspath += sourceSets.main.get().output
+    }
+    create("sdl") {
+        compileClasspath += sourceSets.main.get().output
+    }
+}
+
 dependencies {
     implementation("net.bytebuddy:byte-buddy:1.18.16")
     compileOnly("org.lwjgl:lwjgl:$lwjgl")
     compileOnly("org.lwjgl:lwjgl-glfw:$lwjgl")
     compileOnly("org.lwjgl:lwjgl-opengl:$lwjgl")
     compileOnly("org.lwjgl:lwjgl-stb:$lwjgl")
+    "vulkanCompileOnly"("org.lwjgl:lwjgl:$lwjglVulkan")
+    "vulkanCompileOnly"("org.lwjgl:lwjgl-vulkan:$lwjglVulkan")
+    "sdlCompileOnly"("org.lwjgl:lwjgl:$lwjglSdl")
+    "sdlCompileOnly"("org.lwjgl:lwjgl-sdl:$lwjglSdl")
+    "sdlCompileOnly"("org.lwjgl:lwjgl-opengl:$lwjglSdl")
 }
 
 java {
@@ -41,6 +62,7 @@ tasks.jar {
 }
 
 tasks.shadowJar {
+    from(sourceSets["vulkan"].output, sourceSets["sdl"].output)
     archiveBaseName = "k0t1k-overlay"
     archiveClassifier = ""
     // Mods may bring their own Byte Buddy; ours must never clash with it.
@@ -52,6 +74,15 @@ tasks.shadowJar {
             "Implementation-Version" to project.version,
         )
     }
+}
+
+// The SPIR-V in src/main/resources is committed, so building needs no shader compiler. After editing
+// src/main/shaders, run this task (it needs glslc from shaderc on PATH).
+val compileShaders by tasks.registering(Exec::class) {
+    val out = "src/main/resources/dev/k0t1k/overlay/impl"
+    commandLine("sh", "-c",
+        "glslc -O src/main/shaders/overlay.vert -o $out/overlay.vert.spv && " +
+            "glslc -O src/main/shaders/overlay.frag -o $out/overlay.frag.spv")
 }
 
 tasks.assemble {

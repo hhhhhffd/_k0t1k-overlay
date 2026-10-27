@@ -15,7 +15,7 @@ import static org.lwjgl.stb.STBTruetype.*;
 
 /**
  * A TrueType font rasterised on demand with stb_truetype (shipped with every Minecraft since 1.13)
- * into the shared atlas of {@link Gl}. Glyphs are cached per pixel size, so any size and any
+ * into the shared atlas of {@link Batch}. Glyphs are cached per pixel size, so any size and any
  * codepoint the font has can be drawn without baking a fixed range up front.
  */
 final class Font {
@@ -58,16 +58,16 @@ final class Font {
     /** Shelf packer over the square atlas texture; shared by all fonts. */
     static final class Atlas {
         final int size;
-        private final Gl gl;
+        private final Batch batch;
         private int shelfX;
         private int shelfY;
         private int shelfH;
         private int generation;
         boolean full;
 
-        Atlas(Gl gl, int size) {
-            this.gl = gl;
-            this.size = size;
+        Atlas(Batch batch) {
+            this.batch = batch;
+            this.size = Batch.ATLAS;
         }
 
         /** Returns {x, y} of a free w x h region, or null when the atlas is full. */
@@ -181,7 +181,7 @@ final class Font {
         }
         ByteBuffer pixels = ByteBuffer.allocateDirect(w * h);
         stbtt_MakeGlyphBitmap(info, pixels, w, h, w, scale, scale, index);
-        atlas.gl.uploadGlyph(at[0], at[1], w, h, pixels);
+        atlas.batch.putGlyph(at[0], at[1], w, h, pixels);
         float s = atlas.size;
         return new Glyph(advance, x0, y0, w, h, at[0] / s, at[1] / s, (at[0] + w) / s, (at[1] + h) / s);
     }

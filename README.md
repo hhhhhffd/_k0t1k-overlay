@@ -1,7 +1,8 @@
 # overlay-agent
 
 An in-game overlay for Minecraft Java, in the spirit of the Steam overlay. It is a Java agent, not a
-mod, so one jar works on vanilla, Fabric, Forge and NeoForge.
+mod, so one jar works on vanilla, Fabric, Forge and NeoForge, with OpenGL or Vulkan (Minecraft's own
+Vulkan backend or VulkanMod), on GLFW or on SDL3 (Minecraft 26.3+).
 
 Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it.
 
@@ -13,24 +14,43 @@ Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it
 
 ## How it works
 
-The agent hooks LWJGL's `org.lwjgl.glfw.GLFW` with Byte Buddy. It never touches Minecraft classes.
+The agent hooks LWJGL with Byte Buddy. It never touches Minecraft classes. Every hooked method
+calls one dispatcher with `{class, method, arguments}`. Before the call, the dispatcher can replace
+the arguments or skip the call. After the call, it can replace the return value.
 
 | Hook | Purpose |
 |---|---|
-| `glfwSwapBuffers` | Draws the overlay over the finished frame |
-| `glfwSet{Key,Char,CharMods,MouseButton,CursorPos,Scroll}Callback` | Wraps the game's callbacks so the overlay sees input first and swallows it while open. A release still reaches the game if the game saw the press, so held keys do not stick |
-| `glfwGetKey`, `glfwGetMouseButton` | Report "released" while the overlay is open |
-| `glfwSetInputMode(GLFW_CURSOR)` | Defers the game's cursor changes until the overlay closes |
+| `glfwSwapBuffers`, `SDL_GL_SwapWindow` | OpenGL: draws the overlay over the finished frame |
+| `vkQueuePresentKHR` | Vulkan: draws into the swapchain image right before it is presented |
+| `vkCreateSwapchainKHR`, `vkDestroySwapchainKHR`, `vkDestroyDevice`, `vkGetDeviceQueue(2)` | Vulkan: tracks swapchains and queue families, and adds colour attachment usage to swapchains (Minecraft only blits into them) |
+| `glfwSet{Key,Char,CharMods,MouseButton,CursorPos,Scroll}Callback` | GLFW: wraps the game's callbacks, so the overlay sees input first and swallows it while open |
+| `SDL_PollEvent` | SDL: the overlay inspects each event and neutralises the ones it takes by rewriting their type to `SDL_EVENT_USER`, which the game ignores |
+| `glfwGetKey`, `glfwGetMouseButton` | GLFW: keys and buttons read as released while the overlay is open |
+| `glfwSetInputMode(GLFW_CURSOR)`, `SDL_SetWindowRelativeMouseMode`, `SDL_WarpMouseInWindow`, `SDL_Start/StopTextInput` | Holds back the game's cursor and text input changes until the overlay closes |
 
-The inlined advice only uses JDK types stored in the system properties, which every class loader can
-see. The overlay itself (`dev.k0t1k.overlay.impl`) loads in a child-first class loader whose parent
-is the loader of `GLFW`, so it links against the game's own LWJGL, including inside Forge/NeoForge
-module layers.
+A key or button release still reaches the game if the game saw the press, so held keys do not stick.
 
-Drawing uses a small OpenGL 3.2 core renderer with signed-distance rounded rectangles and glyphs
-rasterised on demand by stb_truetype. Every Minecraft version ships stb, so no natives are bundled.
-All GL state the renderer touches is saved and restored, because Minecraft caches GL state. The font
-is Inter (SIL OFL 1.1, `src/main/resources/dev/k0t1k/overlay/impl/Inter-LICENSE.txt`).
+The advice only uses JDK types stored in the system properties, which every class loader can see.
+The overlay itself (`dev.k0t1k.overlay.impl`) loads in a child-first class loader whose parent is
+the loader of the hooked LWJGL class. That way it links against the game's own LWJGL, including
+inside Forge/NeoForge module layers.
+
+Each frame is built once on the CPU as a `Batch`: rounded rectangles as signed distances, glyphs that
+stb_truetype rasterises on demand, and the glyph atlas. Every Minecraft version ships stb, so no
+natives are bundled. A renderer for the game's graphics API then draws the batch:
+
+- **`GlRenderer`** (OpenGL 3.2 core) saves and restores all GL state it touches, because Minecraft
+  caches GL state.
+- **`VkRenderer`** records one render pass over the swapchain image (load, draw, back to
+  `PRESENT_SRC_KHR`). It submits on the presenting queue, waits on the semaphores the game passed
+  to the present, and makes the present wait on its own semaphore instead. Its SPIR-V is compiled
+  from `src/main/shaders` and committed. `./gradlew compileShaders` rebuilds it with `glslc`.
+
+The font is Inter (SIL OFL 1.1, `src/main/resources/dev/k0t1k/overlay/impl/Inter-LICENSE.txt`).
+
+The Vulkan and SDL code lives in its own source sets (`src/vulkan`, `src/sdl`). Each compiles
+against the oldest LWJGL that has the bindings it needs (3.3.1 for Vulkan, 3.4.3 for SDL). They are
+loaded by name, so the main code still links on LWJGL 3.1.6 (Minecraft 1.13).
 
 The chat history comes from `logs/latest.log`: the game writes every chat line there as `[CHAT] ...`,
 and `Connecting to host, port` gives the server. New lines go to an append-only store, which is read
@@ -38,15 +58,23 @@ back a page at a time.
 
 ## Supported versions
 
-- Minecraft 1.13 to 26.2 (GLFW). Tested in game on vanilla 1.21.4 and NeoForge 21.4 (1.21.4).
+| Setup | Window | Graphics | Tested in game |
+|---|---|---|---|
+| Minecraft 1.13 to 26.1 | GLFW | OpenGL | vanilla 1.21.4, NeoForge 21.4 (1.21.4) |
+| Minecraft 26.2 | GLFW | OpenGL or Vulkan | Vulkan |
+| Minecraft 26.3+ | SDL3 | OpenGL or Vulkan | Vulkan |
+| VulkanMod (Fabric) | GLFW | Vulkan | 0.6.8 on 1.21.11 |
+
+The Vulkan runs were checked with the Khronos validation layer loaded and reported no messages. They
+were on lavapipe (Mesa's software Vulkan) under Xvfb. On SDL, OpenGL is not tested in game: Xvfb has
+no sRGB-capable GLX visual, so 26.3 cannot create its OpenGL window there. The parts are tested
+separately: SDL input on 26.3 with Vulkan, and the GL renderer on GLFW.
+
 - The agent is compiled against LWJGL 3.1.6, the oldest version the game ships. Every LWJGL member
   it references was checked to resolve in 3.1.6, 3.2.2, 3.3.3 and 3.4.0. Compiling against a newer
   LWJGL would break 1.13, because from 3.2 on javac binds inherited GL methods to `GL30`.
 - Before 1.17 the game runs in a compatibility context. macOS only offers OpenGL 2.1 there, so the
   overlay's GLSL 1.50 shaders do not compile and the overlay disables itself.
-- **26.3+ is not supported yet**: the game moved from GLFW to SDL3, so none of the hooks fire there,
-  and the overlay stays silent.
-- With the experimental Vulkan renderer (26.2) there is no OpenGL context, so the overlay draws nothing.
 - Runs on Java 8 to 25 (compiled with `--release 8`).
 
 ## Build

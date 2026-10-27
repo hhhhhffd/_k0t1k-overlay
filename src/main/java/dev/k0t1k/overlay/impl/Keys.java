@@ -28,6 +28,8 @@ final class Keys {
     static final int MOD_SUPER = 8;
 
     static final int RELEASE = 0;
+    static final int PRESS = 1;
+    static final int REPEAT = 2;
 
     private Keys() {
     }

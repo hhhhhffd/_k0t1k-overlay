@@ -22,10 +22,10 @@ final class Ui {
     static final int WARN = 0xfffbbf24;
     static final int DANGER = 0xfff87171;
 
-    final Gl gl;
+    final Batch batch;
     final Font regular;
     final Font bold;
-    final Platform platform;
+    Platform platform;
     float scale = 1;
 
     // Input of the current frame.
@@ -45,8 +45,8 @@ final class Ui {
     /** Set when a widget consumed the click, so clicking empty space can drop the focus. */
     private boolean clickHandled;
 
-    Ui(Gl gl, Font regular, Font bold, Platform platform) {
-        this.gl = gl;
+    Ui(Batch batch, Font regular, Font bold, Platform platform) {
+        this.batch = batch;
         this.regular = regular;
         this.bold = bold;
         this.platform = platform;
@@ -137,11 +137,11 @@ final class Ui {
     // ---- drawing ----
 
     void rect(float x, float y, float w, float h, int color) {
-        gl.rect(x * scale, y * scale, w * scale, h * scale, color);
+        batch.rect(x * scale, y * scale, w * scale, h * scale, color);
     }
 
     void round(float x, float y, float w, float h, float r, int color) {
-        gl.roundRect(x * scale, y * scale, w * scale, h * scale, r * scale, color);
+        batch.roundRect(x * scale, y * scale, w * scale, h * scale, r * scale, color);
     }
 
     /** A rounded box with a one unit border. */
@@ -151,11 +151,11 @@ final class Ui {
     }
 
     void clip(float x, float y, float w, float h) {
-        gl.pushClip(x * scale, y * scale, w * scale, h * scale);
+        batch.pushClip(x * scale, y * scale, w * scale, h * scale);
     }
 
     void unclip() {
-        gl.popClip();
+        batch.popClip();
     }
 
     float lineHeight(Font font, float size) {
@@ -206,7 +206,7 @@ final class Ui {
             if (g.w > 0) {
                 float gx = Math.round(pen) + g.x0;
                 float gy = baseline + g.y0;
-                gl.glyph(gx, gy, gx + g.w, gy + g.h, g.u0, g.v0, g.u1, g.v1, color);
+                batch.glyph(gx, gy, gx + g.w, gy + g.h, g.u0, g.v0, g.u1, g.v1, color);
             }
             pen += g.advance;
             prev = cp;

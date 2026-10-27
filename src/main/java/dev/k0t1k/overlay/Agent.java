@@ -3,172 +3,168 @@ package dev.k0t1k.overlay;
 import java.lang.instrument.Instrumentation;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.util.function.BooleanSupplier;
-import java.util.function.IntBinaryOperator;
-import java.util.function.LongConsumer;
+import java.util.function.Function;
 
 import net.bytebuddy.agent.builder.AgentBuilder;
 import net.bytebuddy.asm.Advice;
+import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
+import net.bytebuddy.matcher.ElementMatcher;
 
-import static net.bytebuddy.matcher.ElementMatchers.named;
+import static net.bytebuddy.matcher.ElementMatchers.namedOneOf;
 import static net.bytebuddy.matcher.ElementMatchers.not;
-import static net.bytebuddy.matcher.ElementMatchers.takesArgument;
-import static net.bytebuddy.matcher.ElementMatchers.takesArguments;
 
 /**
  * Entry point of {@code -javaagent:k0t1k-overlay.jar[=key=value,...]}.
  *
- * <p>The agent hooks LWJGL's {@code GLFW} class, never Minecraft itself, so it works the same on
- * vanilla, Fabric, Forge and NeoForge. The advice inlined into {@code GLFW} only talks to JDK types
- * stored in the system properties: those are visible from every class loader, while the agent's own
- * classes may not be (module layers of Forge/NeoForge). The overlay itself is loaded lazily by
- * {@link ImplLoader} as a child of whichever loader defined {@code GLFW}, so it links against the
- * game's own copy of LWJGL.
+ * <p>The agent hooks LWJGL, never Minecraft itself, so it works the same on vanilla, Fabric, Forge
+ * and NeoForge: the window library (GLFW, or SDL from 26.3 on) for frames and input, and Vulkan's
+ * swapchain functions for games that render with Vulkan (Minecraft's own backend or VulkanMod).
+ *
+ * <p>Every hooked method calls one function stored in the system properties with
+ * {@code {class, method name, arguments}} (plus the return value on exit). JDK types are visible from
+ * every class loader, while the agent's own classes may not be (module layers of Forge/NeoForge). The
+ * overlay itself is loaded lazily by {@link ImplLoader} as a child of whichever loader defined the
+ * hooked LWJGL class, so it links against the game's own copy of LWJGL.
  */
 public final class Agent {
-    static final String SWAP = "dev.k0t1k.overlay.swap";
-    static final String WRAP = "dev.k0t1k.overlay.wrap";
-    static final String OPEN = "dev.k0t1k.overlay.open";
-    static final String INPUT_MODE = "dev.k0t1k.overlay.inputMode";
+    static final String CALL = "dev.k0t1k.overlay.call";
+
+    private static final String[] TYPES = {
+        "org.lwjgl.glfw.GLFW",
+        "org.lwjgl.sdl.SDLVideo",
+        "org.lwjgl.sdl.SDLEvents",
+        "org.lwjgl.sdl.SDLKeyboard",
+        "org.lwjgl.sdl.SDLMouse",
+        "org.lwjgl.vulkan.KHRSwapchain",
+        "org.lwjgl.vulkan.VK10",
+        "org.lwjgl.vulkan.VK11",
+    };
+
+    /** Hooks that run before the method and may replace its arguments or skip it. */
+    private static final ElementMatcher<MethodDescription> ENTER = namedOneOf(
+            // GLFW (Minecraft 1.13 to 26.2)
+            "glfwSwapBuffers",
+            "glfwSetKeyCallback", "glfwSetCharCallback", "glfwSetCharModsCallback",
+            "glfwSetMouseButtonCallback", "glfwSetCursorPosCallback", "glfwSetScrollCallback",
+            "glfwSetInputMode",
+            // SDL (Minecraft 26.3+)
+            "SDL_GL_SwapWindow", "SDL_SetWindowRelativeMouseMode", "SDL_WarpMouseInWindow",
+            "SDL_StartTextInput", "SDL_StopTextInput",
+            // Vulkan
+            "vkQueuePresentKHR", "vkCreateSwapchainKHR", "vkDestroySwapchainKHR", "vkDestroyDevice");
+
+    /** Hooks that run after the method and may replace its return value. */
+    private static final ElementMatcher<MethodDescription> EXIT = namedOneOf(
+            "glfwGetKey", "glfwGetMouseButton",
+            "SDL_PollEvent",
+            "vkCreateSwapchainKHR", "vkGetDeviceQueue", "vkGetDeviceQueue2");
 
     private Agent() {
     }
 
     public static void premain(String args, Instrumentation instrumentation) {
         URL jar = Agent.class.getProtectionDomain().getCodeSource().getLocation();
-        Dispatcher dispatcher = new Dispatcher(jar, args == null ? "" : args);
-        System.getProperties().put(SWAP, dispatcher.swap);
-        System.getProperties().put(WRAP, dispatcher.wrap);
-        System.getProperties().put(OPEN, dispatcher.open);
-        System.getProperties().put(INPUT_MODE, dispatcher.inputMode);
+        System.getProperties().put(CALL, new Dispatcher(jar, args == null ? "" : args));
 
         new AgentBuilder.Default()
                 .disableClassFormatChanges()
-                .ignore(not(named("org.lwjgl.glfw.GLFW")))
+                .ignore(not(namedOneOf(TYPES)))
                 .with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
-                .type(named("org.lwjgl.glfw.GLFW"))
+                .type(namedOneOf(TYPES))
                 .transform((builder, type, loader, module, domain) -> builder
-                        .visit(Advice.to(SwapAdvice.class)
-                                .on(named("glfwSwapBuffers").and(takesArguments(long.class))))
-                        .visit(Advice.to(CallbackAdvice.class).on(named("glfwSetKeyCallback")
-                                        .or(named("glfwSetCharCallback"))
-                                        .or(named("glfwSetCharModsCallback"))
-                                        .or(named("glfwSetMouseButtonCallback"))
-                                        .or(named("glfwSetCursorPosCallback"))
-                                        .or(named("glfwSetScrollCallback"))
-                                .and(takesArguments(2))
-                                .and(takesArgument(0, long.class))))
-                        .visit(Advice.to(PollAdvice.class)
-                                .on(named("glfwGetKey").or(named("glfwGetMouseButton"))
-                                        .and(takesArguments(long.class, int.class))))
-                        .visit(Advice.to(InputModeAdvice.class)
-                                .on(named("glfwSetInputMode").and(takesArguments(long.class, int.class, int.class)))))
+                        .visit(Advice.to(Enter.class).on(ENTER))
+                        .visit(Advice.to(Exit.class).on(EXIT)))
                 .installOn(instrumentation);
     }
 
-    /** Draws the overlay right before the frame is presented. */
-    static final class SwapAdvice {
-        @Advice.OnMethodEnter(suppress = Throwable.class)
-        @SuppressWarnings("unchecked")
-        static void enter(@Advice.Argument(0) long window, @Advice.Origin Class<?> glfw) {
-            Object hook = System.getProperties().get(SWAP);
-            if (hook != null) {
-                ((java.util.function.ObjLongConsumer<Class<?>>) hook).accept(glfw, window);
-            }
-        }
-    }
-
-    /** Replaces every input callback the game installs with one that the overlay can intercept. */
-    static final class CallbackAdvice {
-        @Advice.OnMethodEnter(suppress = Throwable.class)
-        @SuppressWarnings("unchecked")
-        static void enter(
-                @Advice.Argument(value = 1, readOnly = false, typing = Assigner.Typing.DYNAMIC) Object callback,
-                @Advice.Origin Class<?> glfw,
-                @Advice.Origin("#m") String method) {
-            Object hook = System.getProperties().get(WRAP);
-            if (hook != null && callback != null) {
-                callback = ((java.util.function.Function<Object[], Object>) hook)
-                        .apply(new Object[] {glfw, method, callback});
-            }
-        }
-    }
-
-    /** Keys and buttons read as released while the overlay is open, so the game does not act on them. */
-    static final class PollAdvice {
-        @Advice.OnMethodExit(suppress = Throwable.class)
-        static void exit(@Advice.Return(readOnly = false) int state) {
-            Object hook = System.getProperties().get(OPEN);
-            if (hook != null && ((BooleanSupplier) hook).getAsBoolean()) {
-                state = 0;
-            }
-        }
-    }
-
-    /** While the overlay is open the cursor belongs to it; the game's cursor changes apply on close. */
-    static final class InputModeAdvice {
+    /**
+     * Calls the overlay before the method. The overlay answers null to go on unchanged, an array to
+     * replace the arguments, or {@code Boolean.TRUE} to skip the method (it then returns 0/null).
+     */
+    static final class Enter {
         @Advice.OnMethodEnter(skipOn = Advice.OnNonDefaultValue.class, suppress = Throwable.class)
-        static boolean enter(@Advice.Argument(1) int mode, @Advice.Argument(2) int value) {
-            Object hook = System.getProperties().get(INPUT_MODE);
-            return hook != null && ((IntBinaryOperator) hook).applyAsInt(mode, value) != 0;
+        @SuppressWarnings("unchecked")
+        static boolean enter(
+                @Advice.Origin Class<?> type,
+                @Advice.Origin("#m") String method,
+                @Advice.AllArguments(readOnly = false, typing = Assigner.Typing.DYNAMIC) Object[] args) {
+            Object hook = System.getProperties().get(CALL);
+            if (hook == null) {
+                return false;
+            }
+            Object result = ((Function<Object[], Object>) hook).apply(new Object[] {type, method, args});
+            if (result instanceof Object[]) {
+                args = (Object[]) result;
+                return false;
+            }
+            return Boolean.TRUE.equals(result);
+        }
+    }
+
+    /** Calls the overlay after the method; a non-null answer replaces the return value. */
+    static final class Exit {
+        @Advice.OnMethodExit(suppress = Throwable.class)
+        @SuppressWarnings("unchecked")
+        static void exit(
+                @Advice.Origin Class<?> type,
+                @Advice.Origin("#m") String method,
+                @Advice.AllArguments Object[] args,
+                @Advice.Return(readOnly = false, typing = Assigner.Typing.DYNAMIC) Object value) {
+            Object hook = System.getProperties().get(CALL);
+            if (hook == null) {
+                return;
+            }
+            Object result = ((Function<Object[], Object>) hook).apply(new Object[] {type, method, args, value});
+            if (result != null) {
+                value = result;
+            }
         }
     }
 
     /**
-     * Creates the overlay on the first hook call, once the class loader of {@code GLFW} is known, and
-     * forwards every hook to it. Only JDK functional types cross the class loader boundary.
+     * Creates the overlay on the first hook call, once the class loader of LWJGL is known, and
+     * forwards every call to it. Only JDK types cross the class loader boundary.
      */
-    static final class Dispatcher {
+    static final class Dispatcher implements Function<Object[], Object> {
         private final URL jar;
         private final String args;
-        private volatile boolean failed;
-        private LongConsumer implSwap;
-        private java.util.function.BiFunction<String, Object, Object> implWrap;
-        private BooleanSupplier implOpen;
-        private IntBinaryOperator implInputMode;
-
-        final java.util.function.ObjLongConsumer<Class<?>> swap = (glfw, window) -> {
-            if (init(glfw)) {
-                implSwap.accept(window);
-            }
-        };
-        /** Takes {GLFW class, setter name, callback}. */
-        final java.util.function.Function<Object[], Object> wrap =
-                call -> init((Class<?>) call[0]) ? implWrap.apply((String) call[1], call[2]) : call[2];
-        final BooleanSupplier open = () -> implOpen != null && implOpen.getAsBoolean();
-        final IntBinaryOperator inputMode =
-                (mode, value) -> implInputMode == null ? 0 : implInputMode.applyAsInt(mode, value);
+        private volatile Function<Object[], Object> impl;
+        private boolean failed;
 
         Dispatcher(URL jar, String args) {
             this.jar = jar;
             this.args = args;
         }
 
-        @SuppressWarnings("unchecked")
-        private synchronized boolean init(Class<?> glfw) {
-            if (implSwap != null) {
-                return true;
+        @Override
+        public Object apply(Object[] call) {
+            Function<Object[], Object> overlay = impl;
+            if (overlay == null) {
+                overlay = init((Class<?>) call[0]);
+                if (overlay == null) {
+                    return null;
+                }
             }
-            if (failed) {
-                return false;
+            return overlay.apply(call);
+        }
+
+        @SuppressWarnings("unchecked")
+        private synchronized Function<Object[], Object> init(Class<?> lwjgl) {
+            if (impl != null || failed) {
+                return impl;
             }
             try {
-                ClassLoader loader = new ImplLoader(jar, glfw.getClassLoader());
-                Object overlay = loader.loadClass("dev.k0t1k.overlay.impl.Overlay")
+                ClassLoader loader = new ImplLoader(jar, lwjgl.getClassLoader());
+                impl = (Function<Object[], Object>) loader.loadClass("dev.k0t1k.overlay.impl.Overlay")
                         .getConstructor(String.class)
                         .newInstance(args);
-                Object[] hooks = (Object[]) overlay.getClass().getMethod("hooks").invoke(overlay);
-                implWrap = (java.util.function.BiFunction<String, Object, Object>) hooks[1];
-                implOpen = (BooleanSupplier) hooks[2];
-                implInputMode = (IntBinaryOperator) hooks[3];
-                implSwap = (LongConsumer) hooks[0];
-                return true;
+                return impl;
             } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
                 failed = true;
                 System.err.println("[k0t1k-overlay] disabled, could not start: " + e);
                 e.printStackTrace();
-                return false;
+                return null;
             }
         }
     }
