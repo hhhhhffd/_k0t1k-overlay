@@ -73,7 +73,9 @@ tasks.shadowJar {
     archiveClassifier = ""
     // Mods may bring their own Byte Buddy; ours must never clash with it.
     relocate("net.bytebuddy", "dev.k0t1k.overlay.shadow.bytebuddy")
-    exclude("META-INF/versions/*/module-info.class", "module-info.class", "META-INF/maven/**")
+    // Byte Buddy's Java 24 classes (its JDK class file API bridge) are left out: Forge 1.8.9-1.12.2 scans
+    // the agent jar with an old ASM that fails on them. Byte Buddy uses its shaded ASM without them.
+    exclude("META-INF/versions/**", "module-info.class", "META-INF/maven/**")
     manifest {
         attributes(
             "Premain-Class" to "dev.k0t1k.overlay.Agent",
