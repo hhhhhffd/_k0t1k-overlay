@@ -11,15 +11,18 @@ import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
 import net.bytebuddy.matcher.ElementMatcher;
 
+import static net.bytebuddy.matcher.ElementMatchers.named;
 import static net.bytebuddy.matcher.ElementMatchers.namedOneOf;
+import static net.bytebuddy.matcher.ElementMatchers.takesArguments;
 import static net.bytebuddy.matcher.ElementMatchers.not;
 
 /**
  * Entry point of {@code -javaagent:k0t1k-overlay.jar[=key=value,...]}.
  *
  * <p>The agent hooks LWJGL, never Minecraft itself, so it works the same on vanilla, Fabric, Forge
- * and NeoForge: the window library (GLFW, or SDL from 26.3 on) for frames and input, and Vulkan's
- * swapchain functions for games that render with Vulkan (Minecraft's own backend or VulkanMod).
+ * and NeoForge: the window library (GLFW, or SDL from 26.3 on, or LWJGL 2's Display, Keyboard and
+ * Mouse up to 1.12.2) for frames and input, and Vulkan's swapchain functions for games that render
+ * with Vulkan (Minecraft's own backend or VulkanMod).
  *
  * <p>Every hooked method calls one function stored in the system properties with
  * {@code {class, method name, arguments}} (plus the return value on exit). JDK types are visible from
@@ -39,6 +42,9 @@ public final class Agent {
         "org.lwjgl.vulkan.KHRSwapchain",
         "org.lwjgl.vulkan.VK10",
         "org.lwjgl.vulkan.VK11",
+        "org.lwjgl.opengl.Display",
+        "org.lwjgl.input.Keyboard",
+        "org.lwjgl.input.Mouse",
     };
 
     /** Hooks that run before the method and may replace its arguments or skip it. */
@@ -52,7 +58,11 @@ public final class Agent {
             "SDL_GL_SwapWindow", "SDL_SetWindowRelativeMouseMode", "SDL_WarpMouseInWindow",
             "SDL_StartTextInput", "SDL_StopTextInput",
             // Vulkan
-            "vkQueuePresentKHR", "vkCreateSwapchainKHR", "vkDestroySwapchainKHR", "vkDestroyDevice");
+            "vkQueuePresentKHR", "vkCreateSwapchainKHR", "vkDestroySwapchainKHR", "vkDestroyDevice",
+            // LWJGL 2 (Minecraft 1.12.2 and older): Mouse.setGrabbed
+            "setGrabbed")
+            // Display.update(boolean) swaps the buffers; update() only calls it.
+            .or(named("update").and(takesArguments(boolean.class)));
 
     /** Hooks that run after the method and may replace its return value. */
     private static final ElementMatcher<MethodDescription> EXIT = namedOneOf(
@@ -61,7 +71,9 @@ public final class Agent {
             // A held-back call reports success, as SDL would have.
             "SDL_SetWindowRelativeMouseMode", "SDL_StartTextInput", "SDL_StopTextInput",
             "vkQueuePresentKHR",
-            "vkCreateSwapchainKHR", "vkGetDeviceQueue", "vkGetDeviceQueue2");
+            "vkCreateSwapchainKHR", "vkGetDeviceQueue", "vkGetDeviceQueue2",
+            // LWJGL 2: Keyboard and Mouse event queues and state
+            "next", "isKeyDown", "isButtonDown", "getDX", "getDY", "getDWheel");
 
     private Agent() {
     }

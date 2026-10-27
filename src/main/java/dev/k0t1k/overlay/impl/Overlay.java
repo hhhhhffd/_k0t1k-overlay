@@ -62,6 +62,7 @@ public final class Overlay implements Function<Object[], Object> {
     private GlRenderer gl;
     private VulkanBackend vk;
     private SdlBackend sdl;
+    private LegacyBackend legacy;
     private boolean broken;
     private volatile boolean open;
     private int tab;
@@ -165,6 +166,17 @@ public final class Overlay implements Function<Object[], Object> {
                 case "SDL_StopTextInput":
                     platform = sdl();
                     return sdl.call(method, args, exit ? call[3] : null, exit);
+                // LWJGL 2 (Minecraft 1.12.2 and older); the class tells Keyboard.next from Mouse.next
+                case "update":
+                case "setGrabbed":
+                case "next":
+                case "isKeyDown":
+                case "isButtonDown":
+                case "getDX":
+                case "getDY":
+                case "getDWheel":
+                    platform = legacy();
+                    return legacy.call((Class<?>) call[0], method, args, exit ? call[3] : null, exit);
                 case "vkCreateSwapchainKHR":
                 case "vkDestroySwapchainKHR":
                 case "vkGetDeviceQueue":
@@ -189,6 +201,15 @@ public final class Overlay implements Function<Object[], Object> {
                     .newInstance(this);
         }
         return sdl;
+    }
+
+    private LegacyBackend legacy() throws ReflectiveOperationException {
+        if (legacy == null) {
+            legacy = (LegacyBackend) Class.forName("dev.k0t1k.overlay.impl.LegacyPlatform", true, Overlay.class.getClassLoader())
+                    .getDeclaredConstructor(Overlay.class)
+                    .newInstance(this);
+        }
+        return legacy;
     }
 
     private VulkanBackend vulkan() throws ReflectiveOperationException {
@@ -462,10 +483,16 @@ public final class Overlay implements Function<Object[], Object> {
         }
         atlas = new Font.Atlas(batch);
         try {
-            ui = new Ui(batch, new Font("Inter-Regular.ttf", atlas), new Font("Inter-SemiBold.ttf", atlas), platform);
+            // LWJGL 2 ships no stb_truetype, so its games rasterise with java.awt.
+            boolean awt = platform instanceof LegacyBackend;
+            ui = new Ui(batch, font("Inter-Regular.ttf", awt), font("Inter-SemiBold.ttf", awt), platform);
         } catch (IOException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    private Font font(String resource, boolean awt) throws IOException {
+        return awt ? new AwtFont(resource, atlas) : new StbFont(resource, atlas);
     }
 
     private void draw(float w, float h) {

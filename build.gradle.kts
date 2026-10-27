@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "dev.k0t1k"
-version = "0.1.0"
+version = "0.2.0"
 
 repositories {
     mavenCentral()
@@ -21,12 +21,17 @@ val lwjgl = "3.1.6"
 val lwjglVulkan = "3.3.1"
 // SDL: Minecraft 26.3+.
 val lwjglSdl = "3.4.3"
+// LWJGL 2 (Minecraft 1.12.2 and older, Java 8): another API, so another source set.
+val lwjgl2 = "2.9.3"
 
 sourceSets {
     create("vulkan") {
         compileClasspath += sourceSets.main.get().output
     }
     create("sdl") {
+        compileClasspath += sourceSets.main.get().output
+    }
+    create("lwjgl2") {
         compileClasspath += sourceSets.main.get().output
     }
 }
@@ -42,6 +47,7 @@ dependencies {
     "sdlCompileOnly"("org.lwjgl:lwjgl:$lwjglSdl")
     "sdlCompileOnly"("org.lwjgl:lwjgl-sdl:$lwjglSdl")
     "sdlCompileOnly"("org.lwjgl:lwjgl-opengl:$lwjglSdl")
+    "lwjgl2CompileOnly"("org.lwjgl.lwjgl:lwjgl:$lwjgl2")
 }
 
 java {
@@ -62,7 +68,7 @@ tasks.jar {
 }
 
 tasks.shadowJar {
-    from(sourceSets["vulkan"].output, sourceSets["sdl"].output)
+    from(sourceSets["vulkan"].output, sourceSets["sdl"].output, sourceSets["lwjgl2"].output)
     archiveBaseName = "k0t1k-overlay"
     archiveClassifier = ""
     // Mods may bring their own Byte Buddy; ours must never clash with it.

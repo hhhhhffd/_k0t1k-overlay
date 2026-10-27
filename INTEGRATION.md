@@ -24,7 +24,7 @@ see [README.md](README.md).
   build; the Gradle wrapper and toolchain handle the rest. It does not need a shader compiler,
   because the SPIR-V is committed.
 - **Output:** `packages/overlay-agent/build/libs/k0t1k-overlay-<version>.jar`, about 5.4 MB. The
-  version comes from `build.gradle.kts` (`version = "0.1.0"`) and also appears in the manifest as
+  version comes from `build.gradle.kts` (`version = "0.2.0"`) and also appears in the manifest as
   `Implementation-Version`.
 - **Contents:** one jar for every OS, CPU, loader and Minecraft version. There are no natives
   inside; it uses the LWJGL the game ships. Byte Buddy is shaded under
@@ -98,6 +98,7 @@ There are two reasonable ways to deliver the jar. The user has not decided betwe
 - **Hotkey:** Shift+Tab opens and closes the overlay, Esc closes it. The hotkey is not
   configurable yet. While a game text field is focused, Shift+Tab still goes to the overlay.
 - **Supported setups:**
+  - Minecraft 1.8–1.12.2 on LWJGL 2 with OpenGL
   - Minecraft 1.13–26.1 on GLFW with OpenGL
   - 26.2 on GLFW with OpenGL or Vulkan
   - 26.3+ on SDL3 with OpenGL or Vulkan
@@ -105,11 +106,12 @@ There are two reasonable ways to deliver the jar. The user has not decided betwe
   - vanilla, Fabric, Forge and NeoForge
 
   The README has the exact test matrix.
-- **Unsupported setups are harmless.** On Minecraft before 1.13 (LWJGL 2), the hooks never match and
-  the agent does nothing. The same happens with a renderer the agent cannot draw into, such as a
-  queue without graphics support or macOS before 1.17. So the launcher can add the agent
-  unconditionally when the user enables the feature. Hiding the option for versions before 1.13 is
-  still cleaner.
+- **Unsupported setups are harmless.** On Minecraft before 1.8 the hooks may not match and the agent
+  does nothing. The same happens with a renderer the agent cannot draw into, such as a queue without
+  graphics support, an OpenGL below 3.0 on LWJGL 2, or macOS before 1.17 (LWJGL 3 compatibility
+  context). So the launcher can add the agent unconditionally when the user enables the feature.
+  `k0t1k_core::overlay::supports` gates it to 1.8 and newer, and hiding the option for older versions
+  is cleaner still.
 - **Separate clients:** Lunar and Feather are started by their own launchers, so the overlay does
   not apply to them. LabyMod 4 in the client slot is untested.
 - **Cost:** while the overlay is closed and the HUD is off, the game's frame is untouched; the hooks
@@ -146,6 +148,10 @@ the JDK prints the same kind of warning for LWJGL's own `System::load`.
 Run these tests only on a virtual display (Xvfb) in WSL, never on the user's desktop, as the rest
 of the project does. The agent was tested this way. Two environment problems can get in the way:
 
+- **LWJGL 2 (1.8 to 1.12.2) on Xvfb** lists display modes by running the `xrandr` command, so it
+  needs one on `PATH` (a script that prints one mode is enough), and the game window needs X input
+  focus (`xdotool windowfocus`), or the game never grabs the mouse. Java 8 is needed: 1.8 to 1.16
+  run on it.
 - **Mesa 26.2.5** makes Minecraft hang in its own texture upload, with or without the agent. The
   machine was rolled back to 26.2.2.
 - **26.3 with OpenGL** cannot create its window on Xvfb, because Xvfb offers no sRGB-capable GLX

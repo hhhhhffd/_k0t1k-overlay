@@ -1,35 +1,19 @@
 package dev.k0t1k.overlay.impl;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.IntBuffer;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.lwjgl.stb.STBTTFontinfo;
-
-import static org.lwjgl.stb.STBTruetype.*;
-
 /**
- * A TrueType font rasterised on demand with stb_truetype (shipped with every Minecraft since 1.13)
- * into the shared atlas of {@link Batch}. Glyphs are cached per pixel size, so any size and any
- * codepoint the font has can be drawn without baking a fixed range up front.
+ * A font rasterised on demand into the shared atlas of {@link Batch}. Glyphs are cached per pixel
+ * size, so any size and any codepoint the font has can be drawn without baking a fixed range up
+ * front. {@link StbFont} rasterises with stb_truetype (shipped with every Minecraft since 1.13);
+ * {@link AwtFont} with java.awt, for Minecraft versions on LWJGL 2, which has no stb.
  */
-final class Font {
-    private final ByteBuffer data; // stb keeps pointers into it, so it must stay reachable
-    private final STBTTFontinfo info = STBTTFontinfo.create();
-    private final int ascent;
-    private final int descent;
-    private final int lineGap;
+abstract class Font {
     private final Atlas atlas;
     private final Map<Long, Glyph> glyphs = new HashMap<>();
-    private final IntBuffer a = ints();
-    private final IntBuffer b = ints();
-    private final IntBuffer c = ints();
-    private final IntBuffer d = ints();
+    private int generation;
 
     static final class Glyph {
         final float advance; // pixels
@@ -97,51 +81,24 @@ final class Font {
         }
     }
 
-    private int generation;
-
-    Font(String resource, Atlas atlas) throws IOException {
+    Font(Atlas atlas) {
         this.atlas = atlas;
-        byte[] bytes;
-        try (InputStream in = Font.class.getResourceAsStream(resource)) {
-            if (in == null) {
-                throw new IOException("missing font " + resource);
-            }
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            byte[] buffer = new byte[65536];
-            for (int n; (n = in.read(buffer)) > 0; ) {
-                out.write(buffer, 0, n);
-            }
-            bytes = out.toByteArray();
-        }
-        data = ByteBuffer.allocateDirect(bytes.length).order(ByteOrder.nativeOrder());
-        data.put(bytes).flip();
-        if (!stbtt_InitFont(info, data)) {
-            throw new IOException("unreadable font " + resource);
-        }
-        stbtt_GetFontVMetrics(info, a, b, c);
-        ascent = a.get(0);
-        descent = b.get(0);
-        lineGap = c.get(0);
-    }
-
-    private static IntBuffer ints() {
-        return ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder()).asIntBuffer();
-    }
-
-    private float scale(float px) {
-        return stbtt_ScaleForPixelHeight(info, px);
     }
 
     /** Distance from the top of a line to its baseline. */
-    float ascent(float px) {
-        return ascent * scale(px);
-    }
+    abstract float ascent(float px);
 
-    float lineHeight(float px) {
-        return (ascent - descent + lineGap) * scale(px);
-    }
+    abstract float lineHeight(float px);
 
-    Glyph glyph(int codepoint, float px) {
+    /** Whether the font has an outline for the codepoint; others fall back to a placeholder. */
+    abstract boolean has(int codepoint);
+
+    abstract float kern(int left, int right, float px);
+
+    /** Rasterises one glyph at an exact pixel size into the atlas. */
+    abstract Glyph rasterise(int codepoint, float px);
+
+    final Glyph glyph(int codepoint, float px) {
         if (generation != atlas.generation) {
             glyphs.clear();
             generation = atlas.generation;
@@ -156,37 +113,15 @@ final class Font {
         return glyph;
     }
 
-    /** Whether the font has an outline for the codepoint; others fall back to a placeholder. */
-    boolean has(int codepoint) {
-        return stbtt_FindGlyphIndex(info, codepoint) != 0;
-    }
-
-    private Glyph rasterise(int codepoint, float px) {
-        float scale = scale(px);
-        int index = stbtt_FindGlyphIndex(info, codepoint);
-        stbtt_GetGlyphHMetrics(info, index, a, b);
-        float advance = a.get(0) * scale;
-        stbtt_GetGlyphBitmapBox(info, index, scale, scale, a, b, c, d);
-        int x0 = a.get(0);
-        int y0 = b.get(0);
-        int w = c.get(0) - x0;
-        int h = d.get(0) - y0;
-        if (w <= 0 || h <= 0) {
-            return new Glyph(advance, 0, 0, 0, 0, 0, 0, 0, 0);
-        }
+    /** Copies a rasterised glyph bitmap into the atlas; blank when the atlas is full. */
+    final Glyph place(float advance, int x0, int y0, int w, int h, ByteBuffer pixels) {
         int[] at = atlas.allocate(w, h);
         if (at == null) {
             // Drawn as blank this frame; the overlay resets the atlas before the next one.
             return new Glyph(advance, 0, 0, 0, 0, 0, 0, 0, 0);
         }
-        ByteBuffer pixels = ByteBuffer.allocateDirect(w * h);
-        stbtt_MakeGlyphBitmap(info, pixels, w, h, w, scale, scale, index);
         atlas.batch.putGlyph(at[0], at[1], w, h, pixels);
         float s = atlas.size;
         return new Glyph(advance, x0, y0, w, h, at[0] / s, at[1] / s, (at[0] + w) / s, (at[1] + h) / s);
-    }
-
-    float kern(int left, int right, float px) {
-        return stbtt_GetCodepointKernAdvance(info, left, right) * scale(px);
     }
 }
