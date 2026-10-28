@@ -222,6 +222,7 @@ back a page at a time.
 │   ├── lwjgl2/java          # LegacyPlatform, LegacyGlRenderer (Minecraft 1.8 to 1.12.2)
 │   └── cef/java             # JCEF bridge, shipped inside the agent as cef-bridge.jar
 ├── scripts/
+│   ├── dev-install.sh       # signed local build into a _k0t1k launcher, for development
 │   └── release-plugin.sh    # signed GitHub release for the _k0t1k launcher
 ├── INTEGRATION.md           # what a launcher needs to ship and start the agent
 └── docs/mascot.png          # the cat
@@ -248,6 +249,14 @@ installs newer ones through its update check (see [INTEGRATION.md](INTEGRATION.m
 > The script needs a clean, pushed tree, `gh` signed in, and the plugin signing key
 > (`$K0T1K_PLUGIN_KEY`, default `~/.config/k0t1k/plugin-signing-key.pem`). The key never goes into a
 > repository; the script checks the signature against the public key the launcher embeds.
+
+### Development with the launcher
+
+`scripts/dev-install.sh <launcher-dir>` (or `K0T1K_DIR`) builds the jar, signs `plugin.json` with
+the same key as a release and installs it as the active version in `<launcher-dir>/plugins/overlay`,
+so the launcher's signature and hash checks pass and the next game it starts loads this build. The
+launcher still prefers its built-in baseline when that is newer than `version` in `build.gradle.kts`.
+Do not add a second `-javaagent` to an instance's JVM arguments: the launcher adds its own.
 
 ## Launching
 
