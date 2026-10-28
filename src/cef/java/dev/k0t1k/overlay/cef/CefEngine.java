@@ -118,10 +118,9 @@ public final class CefEngine implements BrowserEngine {
         settings.log_file = new File(cache, "cef.log").getAbsolutePath();
         settings.log_severity = CefSettings.LogSeverity.LOGSEVERITY_WARNING;
         CefApp instance = CefApp.getInstance(argv, settings);
-        if (!windows) {
-            // Linux has no message loop thread of its own; this keeps pumping CEF on the AWT thread.
-            instance.doMessageLoopWork(0);
-        }
+        // Off screen, JCEF runs CEF with an external message pump on the AWT thread: CEF asks for work
+        // through onScheduleMessagePumpWork, and this first call starts the cycle.
+        instance.doMessageLoopWork(0);
         return instance;
     }
 
