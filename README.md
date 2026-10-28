@@ -20,6 +20,19 @@ Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it
 - **Performance**: FPS, frame time, 1% low, a frame time graph, heap, GC and the game's CPU load,
   plus an optional HUD in a corner of the screen.
 
+- **Replay**: the last 30 seconds of the game are kept in memory as JPEG frames (about 1 MB a second);
+  **Shift+F2** or the button in Tools saves them to `<gameDir>/replays` as a GIF or a video (MP4 when
+  `ffmpeg` is on PATH, otherwise a Motion-JPEG AVI). Frames are scaled down on the GPU and read back
+  through pixel buffers with fences, so the game never waits for them. OpenGL only.
+- **Music**: what the system plays (Spotify, a browser tab, any player) with previous, play/pause and
+  next in the strip under the overlay, and a toast when a new track starts. Windows uses the system
+  media controls through a PowerShell child (`media.ps1`), Linux uses `playerctl`.
+- **Crash window**: when the game exits after writing a crash report, the shutdown hook writes what
+  only the live JVM knows (a dump of every thread, uncaught exceptions, the overlay's notes on the
+  session) to `<dataDir>/crashes/` and starts `dev.k0t1k.overlay.CrashDialog` in a JVM of its own. It
+  shows the reason and the report, and uploads both to mclo.gs only when the player clicks
+  "Send to support", then opens the support Discord with the link copied.
+
 The launcher's cat sits in a corner and reacts to deaths, advancements, a five minute AFK, timers,
 screenshots and achievements with a speech bubble (it can be turned off in Profile).
 
@@ -143,6 +156,7 @@ property `-Dk0t1k.overlay.<key>=...`, which wins and suits paths that contain co
 | `dataDir` | `<gameDir>/k0t1k-overlay` | Where the chat history, notes and settings live. Point every instance at one folder to share them |
 | `gameDir` | working directory | The game folder holding `logs/latest.log` |
 | `lang` | `en` | `en` or `ru` |
+| `crashDialog` | `true` | `false` turns off the overlay's crash window, for a launcher that shows its own |
 
 The data folder contains:
 
@@ -155,8 +169,9 @@ The data folder contains:
 - `session-<hash>.lock`: present while a game folder is running; one left behind counts as a crash
 - `timers.tsv`: `due epoch ms TAB length ms TAB label`
 - `screenshots.tsv`: a caption per screenshot, `file TAB epoch ms TAB instance TAB dimension TAB x y z`
+- `crashes/crash_<time>.txt`: the crash window's notes from the live game
 
-The agent writes nothing else. On exit, a shutdown hook stores the last chat lines, any unsaved
+Besides these, the agent writes only saved replays to `<gameDir>/replays`. On exit, a shutdown hook stores the last chat lines, any unsaved
 notes and the stats. If anything fails, it prints `[k0t1k-overlay] ...` with a stack trace to the game's output
 and disables itself, and the game keeps running.
 

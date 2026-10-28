@@ -18,6 +18,7 @@ import java.util.Properties;
  *   <li>{@code dataDir}: where history, notes and settings live; default {@code <gameDir>/k0t1k-overlay}
  *   <li>{@code gameDir}: the game folder; default the working directory, which launchers set to it
  *   <li>{@code lang}: {@code en} (default) or {@code ru}
+ *   <li>{@code crashDialog}: {@code false} turns off the overlay's own crash window
  * </ul>
  */
 final class Options {
@@ -33,6 +34,13 @@ final class Options {
     int hudCorner;
     /** Whether the cat pops up to react to deaths, advancements, AFK and timers. */
     boolean cat = true;
+    /** Whether the last seconds of the game are kept for Shift+F2 (OpenGL only). */
+    boolean replay = true;
+    /** "video" (MP4 with ffmpeg, otherwise AVI) or "gif". */
+    String replayFormat = "video";
+    /** Whether the overlay shows its own crash window; a launcher with its own can turn it off. */
+    final boolean crashDialog;
+    final String lang;
 
     private final Path settingsFile;
 
@@ -46,7 +54,9 @@ final class Options {
         }
         gameDir = Paths.get(option(args, "gameDir", System.getProperty("user.dir"))).toAbsolutePath();
         dataDir = Paths.get(option(args, "dataDir", gameDir.resolve("k0t1k-overlay").toString())).toAbsolutePath();
-        strings = new Strings(option(args, "lang", "en"));
+        lang = option(args, "lang", "en");
+        strings = new Strings(lang);
+        crashDialog = !"false".equalsIgnoreCase(option(args, "crashDialog", "true"));
         username = usernameFromCommandLine();
         settingsFile = dataDir.resolve("overlay.properties");
     }
@@ -80,6 +90,8 @@ final class Options {
         }
         hud = Boolean.parseBoolean(saved.getProperty("hud", "false"));
         cat = Boolean.parseBoolean(saved.getProperty("cat", "true"));
+        replay = Boolean.parseBoolean(saved.getProperty("replay", "true"));
+        replayFormat = "gif".equals(saved.getProperty("replayFormat")) ? "gif" : "video";
         try {
             hudCorner = Math.max(0, Math.min(3, Integer.parseInt(saved.getProperty("hudCorner", "0"))));
         } catch (NumberFormatException e) {
@@ -93,6 +105,8 @@ final class Options {
         snapshot.setProperty("hud", Boolean.toString(hud));
         snapshot.setProperty("hudCorner", Integer.toString(hudCorner));
         snapshot.setProperty("cat", Boolean.toString(cat));
+        snapshot.setProperty("replay", Boolean.toString(replay));
+        snapshot.setProperty("replayFormat", replayFormat);
         return () -> {
             try {
                 Files.createDirectories(dataDir);

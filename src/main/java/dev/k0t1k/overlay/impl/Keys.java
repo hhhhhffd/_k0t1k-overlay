@@ -20,6 +20,7 @@ final class Keys {
     static final int UP = 265;
     static final int HOME = 268;
     static final int END = 269;
+    static final int F2 = 291;
     static final int KP_ENTER = 335;
 
     static final int MOD_SHIFT = 1;

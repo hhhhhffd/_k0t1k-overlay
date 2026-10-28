@@ -139,10 +139,15 @@ final class Stats {
         };
     }
 
-    /** On JVM exit: a crash report written during this session counts as a crash; then the lock goes. */
-    void saveOnExit() {
+    /**
+     * On JVM exit: a crash report written during this session counts as a crash; then the lock goes.
+     * Returns that crash report, or null after a normal exit.
+     */
+    Path saveOnExit() {
+        Path report = null;
         try {
-            if (crashedThisSession()) {
+            report = crashReport();
+            if (report != null) {
                 add("crashes", 1);
             }
             saveTask().run();
@@ -150,20 +155,26 @@ final class Stats {
         } catch (IOException | RuntimeException e) {
             System.err.println("[k0t1k-overlay] could not save stats: " + e);
         }
+        return report;
     }
 
-    private boolean crashedThisSession() throws IOException {
+    /** The newest crash report written since this game started, or null. */
+    private Path crashReport() throws IOException {
         if (!Files.isDirectory(crashReports)) {
-            return false;
+            return null;
         }
+        Path newest = null;
+        long newestTime = started;
         try (DirectoryStream<Path> reports = Files.newDirectoryStream(crashReports, "crash-*.txt")) {
             for (Path report : reports) {
-                if (Files.getLastModifiedTime(report).toMillis() >= started) {
-                    return true;
+                long time = Files.getLastModifiedTime(report).toMillis();
+                if (time >= newestTime) {
+                    newest = report;
+                    newestTime = time;
                 }
             }
         }
-        return false;
+        return newest;
     }
 
     private synchronized void merge(Properties delta, String ids) throws IOException {

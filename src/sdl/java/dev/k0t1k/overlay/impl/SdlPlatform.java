@@ -179,6 +179,8 @@ final class SdlPlatform implements SdlBackend {
                 return Keys.BACKSPACE;
             case 43:
                 return Keys.TAB;
+            case 59:
+                return Keys.F2;
             case 74:
                 return Keys.HOME;
             case 76:

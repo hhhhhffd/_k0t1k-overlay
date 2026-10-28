@@ -262,6 +262,36 @@ final class ToolsView {
 
     // ---- screenshots ----
 
+    /** The replay buffer row: on/off, format, save. Returns the y below it. */
+    private float replay(Ui ui, float x, float y, float w) {
+        Options options = overlay.options();
+        boolean on = ui.checkbox(x, y + 6, strings.get("replay.toggle"), options.replay);
+        if (on != options.replay) {
+            options.replay = on;
+            overlay.saveSettings();
+        }
+        float fx = x + ui.measure(ui.regular, 13, strings.get("replay.toggle")) + 40;
+        String[] formats = {"video", "gif"};
+        for (String format : formats) {
+            String label = strings.get("replay." + format);
+            float pw = ui.measure(ui.bold, 13, label) + 20;
+            if (ui.pill(fx, y + 1, pw, 26, label, format.equals(options.replayFormat))) {
+                options.replayFormat = format;
+                overlay.saveSettings();
+            }
+            fx += pw + 4;
+        }
+        String save = strings.get("replay.save");
+        float sw = ui.buttonWidth(save);
+        if (ui.button(x + w - sw, y, sw, 28, save, overlay.replayAvailable())) {
+            overlay.saveReplay();
+        }
+        String hint = overlay.replayAvailable() ? strings.get("replay.hint")
+                : options.replay ? strings.get("replay.glOnly") : strings.get("replay.off");
+        ui.textFit(ui.regular, 12, x, y + 34, w, Ui.FAINT, hint);
+        return y + 56;
+    }
+
     private void screenshots(Ui ui, float x, float y, float w, float h) {
         card(ui, x, y, w, h, strings.get("tools.screenshots"));
         float px = x + 16;
@@ -277,7 +307,7 @@ final class ToolsView {
                 overlay.toast(strings.get("error"), e.getMessage());
             }
         }
-        float cy = y + 46;
+        float cy = replay(ui, px, y + 44, pw);
         List<String> recent = screenshots.recent;
         if (recent.isEmpty()) {
             List<int[]> lines = ui.wrap(ui.regular, 13, strings.get("tools.noShots"), pw);

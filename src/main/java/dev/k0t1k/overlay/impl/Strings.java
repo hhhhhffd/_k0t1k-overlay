@@ -150,6 +150,21 @@ final class Strings {
         add("cat.shot1", "Nice shot!", "Красивый кадр!");
         add("cat.shot2", "Did you get my good side?", "А меня с хорошей стороны сняли?");
         add("cat.achievement", "Mrrr, an achievement!", "Мрр, ачивка!");
+        add("cat.replay", "That one's a keeper!", "Это надо сохранить!");
+        add("media.now", "Now playing", "Сейчас играет");
+        add("replay.title", "Replay", "Повтор");
+        add("replay.toggle", "Keep the last 30 s", "Записывать последние 30 с");
+        add("replay.video", "Video", "Видео");
+        add("replay.gif", "GIF", "GIF");
+        add("replay.save", "Save 30 s", "Сохранить 30 с");
+        add("replay.hint", "Shift+F2 in game · video is MP4 with ffmpeg installed, AVI otherwise",
+                "Shift+F2 в игре · видео в MP4, если стоит ffmpeg, иначе AVI");
+        add("replay.glOnly", "Recording works with OpenGL; this game renders another way",
+                "Запись работает на OpenGL, а эта игра рисует иначе");
+        add("replay.off", "Recording is off", "Запись выключена");
+        add("replay.saving", "Saving the last 30 seconds…", "Сохраняю последние 30 секунд…");
+        add("replay.saved", "Replay saved", "Повтор сохранён");
+        add("replay.failed", "Nothing recorded yet", "Пока нечего сохранять");
     }
 
     private void add(String key, String en, String ru) {

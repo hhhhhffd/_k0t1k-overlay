@@ -68,6 +68,12 @@ public final class Overlay implements Function<Object[], Object> {
     private final ModsView modsView;
     private final ProfileView profileView;
     private Cat cat;
+    private final Media media;
+    private final Replay replay;
+    private GlCapture capture;
+    /** Set when reading frames back failed; the replay buffer then stays off for this game. */
+    private boolean captureBroken;
+    private final CrashGuard crashGuard;
     private long lastInput = System.currentTimeMillis();
     private boolean afk;
     private long nextStatsSave = System.currentTimeMillis() + STATS_SAVE;
@@ -146,6 +152,15 @@ public final class Overlay implements Function<Object[], Object> {
         toolsView = new ToolsView(strings, this, game, timers, screenshots);
         modsView = new ModsView(mods, strings, this);
         profileView = new ProfileView(stats, options, saveSettings);
+        media = new Media(ioThread, render, this::report);
+        media.onTrack = track -> {
+            if (!open) {
+                toast(strings.get("media.now"), track);
+            }
+        };
+        replay = new Replay(options.gameDir, this::report);
+        crashGuard = new CrashGuard(options.dataDir);
+        crashGuard.install();
         chat.onNew = this::onChat;
         chat.start();
         notes.load();
@@ -294,7 +309,69 @@ public final class Overlay implements Function<Object[], Object> {
     private void saveOnExit() {
         chat.pollNow();
         notes.saveNow();
-        stats.saveOnExit();
+        media.stop();
+        replay.stop();
+        Path report = stats.saveOnExit();
+        if (report != null && options.crashDialog) {
+            try {
+                crashGuard.onCrash(report, options.lang, sessionSummary());
+            } catch (IOException | RuntimeException e) {
+                report(e);
+            }
+        }
+    }
+
+    /** What the overlay knows about this session, for the crash window's support bundle. */
+    private String sessionSummary() {
+        long minutes = (System.currentTimeMillis() - started) / 60000;
+        return "Instance: " + instance + "\n"
+                + "Session: " + minutes + " min\n"
+                + "Renderer: " + perfView.renderer + "\n"
+                + String.format(Locale.ROOT, "FPS: %d, frame %.1f ms, 1%% low %.1f ms%n", perf.fps, perf.average, perf.worst)
+                + "Heap: " + PerfView.mb(perf.heapUsed) + " / " + PerfView.mb(perf.heapMax) + "\n"
+                + "Mods: " + (mods.scanned ? Integer.toString(mods.mods.size()) : "not read") + "\n"
+                + "Position: " + (game.inWorld ? game.dimension + " " + game.blockPosition() : "not in a world") + "\n";
+    }
+
+    /** Saves the replay buffer (Shift+F2 or the tools tab). */
+    void saveReplay() {
+        if (!replayAvailable()) {
+            toast(strings.get("replay.title"), strings.get(options.replay ? "replay.glOnly" : "replay.off"));
+            return;
+        }
+        if (replay.saving()) {
+            return;
+        }
+        toast(strings.get("replay.title"), strings.get("replay.saving"));
+        replay.save(options.replayFormat, file -> render.execute(() -> {
+            if (file == null) {
+                toast(strings.get("replay.title"), strings.get("replay.failed"));
+                return;
+            }
+            toast(strings.get("replay.saved"), file.getFileName() + "\n" + file.getParent());
+            catSays("cat.replay");
+        }));
+    }
+
+    /** Whether frames are being recorded: OpenGL, the setting on, nothing broken. */
+    boolean replayAvailable() {
+        return options.replay && capture != null && !captureBroken;
+    }
+
+    Replay replay() {
+        return replay;
+    }
+
+    Options options() {
+        return options;
+    }
+
+    void saveSettings() {
+        io.execute(options.saveTask());
+    }
+
+    Media media() {
+        return media;
     }
 
     /** Disables the overlay after a failure in drawing or input, leaving the game untouched. */
@@ -488,6 +565,13 @@ public final class Overlay implements Function<Object[], Object> {
             }
             return true;
         }
+        if (press && key == Keys.F2 && (mods & Keys.MOD_SHIFT) != 0) {
+            // Shift+F2 saves the replay; the game would take a screenshot on F2 alone.
+            if (action == Keys.PRESS) {
+                saveReplay();
+            }
+            return true;
+        }
         if (!open) {
             if (press) {
                 gameKeys.add(key);
@@ -554,6 +638,7 @@ public final class Overlay implements Function<Object[], Object> {
         }
         ui.resetInput();
         if (value) {
+            media.start();
             open = true;
             platform.showCursor();
             platform.sizes(sizes);
@@ -575,6 +660,7 @@ public final class Overlay implements Function<Object[], Object> {
             return;
         }
         platform.sizes(sizes);
+        captureFrame(sizes[0], sizes[1]);
         if (!buildFrame(sizes[0], sizes[1])) {
             return;
         }
@@ -585,6 +671,29 @@ public final class Overlay implements Function<Object[], Object> {
             perfView.renderer = GL11.glGetString(GL11.GL_RENDERER) + " · OpenGL " + GL11.glGetString(GL11.GL_VERSION);
         }
         gl.draw(batch);
+    }
+
+    /** Reads the game's frame (before the overlay draws on it) into the replay buffer. */
+    private void captureFrame(int width, int height) {
+        if (!options.replay || captureBroken || width <= 0 || height <= 0) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (capture == null) {
+            capture = new GlCapture();
+        }
+        if (!replay.due(now)) {
+            return;
+        }
+        int w = Math.min(width, Replay.MAX_WIDTH) & ~1;
+        int h = Math.max(2, Math.round(height * (w / (float) width))) & ~1;
+        try {
+            capture.capture(width, height, w, h, now, replay::add);
+        } catch (RuntimeException | LinkageError e) {
+            // The replay buffer is optional: turn it off, keep the overlay.
+            captureBroken = true;
+            report(e);
+        }
     }
 
     /**
@@ -747,6 +856,33 @@ public final class Overlay implements Function<Object[], Object> {
 
         String hint = strings.get("hint.close");
         ui.text(ui.regular, 12, (w - ui.measure(ui.regular, 12, hint)) / 2, h - 24, Ui.FAINT, hint);
+        drawMedia(w, h);
+    }
+
+    /** What plays on the computer, with previous, play/pause and next, in the strip under the card. */
+    private void drawMedia(float w, float h) {
+        if (!media.active) {
+            return;
+        }
+        float size = 24;
+        float y = h - 30;
+        float x = w - 18 - size * 3 - 8;
+        String[] icons = {"«", media.playing ? "‖" : "▶", "»"};
+        String[] commands = {"prev", "play", "next"};
+        for (int i = 0; i < 3; i++) {
+            float bx = x + i * (size + 4);
+            boolean hot = ui.hover(bx, y, size, size);
+            ui.round(bx, y, size, size, size / 2, hot ? Ui.HOVER : Ui.RAISED);
+            float tw = ui.measure(ui.bold, 13, icons[i]);
+            ui.text(ui.bold, 13, bx + (size - tw) / 2, y + (size - ui.lineHeight(ui.bold, 13)) / 2, Ui.FG, icons[i]);
+            if (hot && ui.clickedIn(bx, y, size, size)) {
+                media.command(commands[i]);
+            }
+        }
+        String label = "♪ " + media.label();
+        float labelW = Math.min(ui.measure(ui.regular, 12, label), Math.min(320, w * 0.3f));
+        ui.textFit(ui.regular, 12, x - 10 - labelW, y + (size - ui.lineHeight(ui.regular, 12)) / 2, labelW,
+                media.playing ? Ui.MUTED : Ui.FAINT, label);
     }
 
     private void drawToasts(float w, float h) {
