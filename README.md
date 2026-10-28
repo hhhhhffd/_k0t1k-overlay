@@ -151,6 +151,9 @@ separately: SDL input on 26.3 with Vulkan, and the GL renderer on GLFW.
 Byte Buddy is shaded and relocated to `dev.k0t1k.overlay.shadow.bytebuddy`, so it cannot clash with
 mods.
 
+`scripts/release-plugin.sh` publishes the jar as a signed launcher plugin release (see
+[INTEGRATION.md](INTEGRATION.md)).
+
 ## Launching
 
 Add the agent to the JVM arguments:

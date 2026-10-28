@@ -1,7 +1,8 @@
 # Integrating the overlay into the launcher
 
 What the launcher side needs to know to ship and start the overlay agent. For the agent's internals,
-see [README.md](README.md).
+see [README.md](README.md). Paths like `packages/core/...` are in the launcher repository
+(`hhhhhffd/_k0t1k`, checked out as `_k0t1k-launcher`).
 
 ## TL;DR
 
@@ -20,10 +21,9 @@ see [README.md](README.md).
 
 ## The artifact
 
-- **Build:** run `./gradlew shadowJar` in `packages/overlay-agent`. It needs JDK 21 or newer to
-  build; the Gradle wrapper and toolchain handle the rest. It does not need a shader compiler,
-  because the SPIR-V is committed.
-- **Output:** `packages/overlay-agent/build/libs/k0t1k-overlay-<version>.jar`, about 5.4 MB. The
+- **Build:** run `./gradlew shadowJar`. It needs JDK 21 or newer to build; the Gradle wrapper and
+  toolchain handle the rest. It does not need a shader compiler, because the SPIR-V is committed.
+- **Output:** `build/libs/k0t1k-overlay-<version>.jar`, about 5.4 MB. The
   version comes from `build.gradle.kts` (`version = "0.2.0"`) and also appears in the manifest as
   `Implementation-Version`.
 - **Contents:** one jar for every OS, CPU, loader and Minecraft version. There are no natives
@@ -83,15 +83,18 @@ Therefore:
 - Delete old versions only when no game is running. The launcher already detects running games
   through java processes.
 
-There are two reasonable ways to deliver the jar. The user has not decided between them yet.
+The jar ships the same way as the RatScan and packconv plugins:
 
-- **A signed GitHub release asset**, like the RatScan and packconv plugins. The launcher downloads
-  it on first use and verifies the signature, so release builds do not need a JDK. This fits the
-  existing plugin infrastructure.
-- **Embedded in the launcher binary** with `include_bytes!` and written to the data folder on
-  first launch. This works offline with no download, but every launcher build environment then
-  needs JDK 21. The Windows build machine has Temurin 21; the Ubuntu chroot for the AppImage would
-  need one too. It also adds 5.4 MB to the exe.
+- `scripts/release-plugin.sh` publishes a GitHub Release of this repository with `plugin.json`,
+  `plugin.json.sig` and `k0t1k-overlay.jar`. The manifest carries the jar's SHA-256 and is signed with
+  the plugin key (`_k0t1k-plugin\n` + the exact bytes of `plugin.json`), so one signature covers the
+  release. The version is `version` in `build.gradle.kts`; bump it before releasing.
+- The launcher build fetches the latest signed release (`apps/app/scripts/fetch-plugins.mjs`) into
+  `apps/app/src-tauri/plugins/overlay/` and embeds that jar in the binary as the baseline, so release
+  builds need no JDK and the overlay works offline.
+- At run time the launcher's update check installs newer signed releases into
+  `<launcher data>/plugins/overlay/<version>/`. Each launch copies the newest valid copy into the
+  overlay data folder as `k0t1k-overlay-<version>.jar` and points the JVM at it.
 
 ## What to expect at runtime
 
