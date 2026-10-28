@@ -31,6 +31,8 @@ final class Options {
     boolean hud;
     /** 0 top left, 1 top right, 2 bottom left, 3 bottom right. */
     int hudCorner;
+    /** Whether the cat pops up to react to deaths, advancements, AFK and timers. */
+    boolean cat = true;
 
     private final Path settingsFile;
 
@@ -77,6 +79,7 @@ final class Options {
             }
         }
         hud = Boolean.parseBoolean(saved.getProperty("hud", "false"));
+        cat = Boolean.parseBoolean(saved.getProperty("cat", "true"));
         try {
             hudCorner = Math.max(0, Math.min(3, Integer.parseInt(saved.getProperty("hudCorner", "0"))));
         } catch (NumberFormatException e) {
@@ -89,6 +92,7 @@ final class Options {
         Properties snapshot = new Properties();
         snapshot.setProperty("hud", Boolean.toString(hud));
         snapshot.setProperty("hudCorner", Integer.toString(hudCorner));
+        snapshot.setProperty("cat", Boolean.toString(cat));
         return () -> {
             try {
                 Files.createDirectories(dataDir);

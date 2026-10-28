@@ -26,7 +26,11 @@ import org.lwjgl.opengl.GL11;
  */
 public final class Overlay implements Function<Object[], Object> {
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm");
-    private static final String[] TABS = {"tab.chat", "tab.notes", "tab.perf"};
+    private static final String[] TABS = {"tab.chat", "tab.notes", "tab.tools", "tab.mods", "tab.profile", "tab.perf"};
+    /** No input for this long while playing counts as AFK, and the cat says so. */
+    private static final long AFK = 5 * 60_000;
+    /** How often the lifetime stats are written. */
+    private static final long STATS_SAVE = 60_000;
 
     private final Options options;
     private final Strings strings;
@@ -55,6 +59,22 @@ public final class Overlay implements Function<Object[], Object> {
     private final ChatView chatView;
     private final NotesView notesView;
     private final PerfView perfView;
+    private final GameState game = new GameState();
+    private final Stats stats;
+    private final Timers timers;
+    private final Screenshots screenshots;
+    private final Mods mods;
+    private final ToolsView toolsView;
+    private final ModsView modsView;
+    private final ProfileView profileView;
+    private Cat cat;
+    private long lastInput = System.currentTimeMillis();
+    private boolean afk;
+    private long nextStatsSave = System.currentTimeMillis() + STATS_SAVE;
+    /** Health in the last frame, to notice the moment the player dies. */
+    private float lastHealth = -1;
+    /** The instance's name: the folder holding the game folder (instances/NAME/minecraft) or the game folder. */
+    private final String instance;
 
     private final Batch batch = new Batch();
     private Font.Atlas atlas;
@@ -102,12 +122,34 @@ public final class Overlay implements Function<Object[], Object> {
         }
         chat = new ChatHistory(options.gameDir, options.dataDir, ioThread, searchThread, render, this::report);
         notes = new Notes(options.dataDir, io, render, this::report);
+        Runnable saveSettings = () -> io.execute(options.saveTask());
         chatView = new ChatView(chat, strings, this);
         notesView = new NotesView(notes, strings);
-        perfView = new PerfView(perf, options, () -> io.execute(options.saveTask()));
-        chat.onNew = this::checkMention;
+        perfView = new PerfView(perf, options, saveSettings);
+        Path gameDir = options.gameDir;
+        Path parent = gameDir.getParent();
+        instance = "minecraft".equals(String.valueOf(gameDir.getFileName())) && parent != null
+                ? String.valueOf(parent.getFileName()) : String.valueOf(gameDir.getFileName());
+        stats = new Stats(options.dataDir, options.gameDir);
+        stats.onUnlock = this::achievement;
+        try {
+            stats.load();
+        } catch (IOException e) {
+            report(e);
+        }
+        timers = new Timers(options.dataDir, io, this::report);
+        timers.onFire = this::timerFired;
+        timers.load();
+        screenshots = new Screenshots(options.gameDir, options.dataDir, ioThread, render, this::report);
+        screenshots.onNew = this::screenshot;
+        mods = new Mods(options.gameDir, io, render, this::report);
+        toolsView = new ToolsView(strings, this, game, timers, screenshots);
+        modsView = new ModsView(mods, strings, this);
+        profileView = new ProfileView(stats, options, saveSettings);
+        chat.onNew = this::onChat;
         chat.start();
         notes.load();
+        screenshots.start();
         Runtime.getRuntime().addShutdownHook(new Thread(this::saveOnExit, "k0t1k-overlay-exit"));
         toast(strings.get("welcome"), strings.get("welcome.body"));
         log("started, data in " + options.dataDir);
@@ -252,6 +294,7 @@ public final class Overlay implements Function<Object[], Object> {
     private void saveOnExit() {
         chat.pollNow();
         notes.saveNow();
+        stats.saveOnExit();
     }
 
     /** Disables the overlay after a failure in drawing or input, leaving the game untouched. */
@@ -296,16 +339,55 @@ public final class Overlay implements Function<Object[], Object> {
         }
     }
 
-    private void checkMention(ChatHistory.Line line) {
+    String username() {
+        return options.username;
+    }
+
+    /** Every new chat line: mention toasts, and the player's advancements for the stats and the cat. */
+    private void onChat(ChatHistory.Line line) {
         String name = options.username;
-        if (name.isEmpty() || open) {
+        if (name.isEmpty()) {
             return;
         }
-        String text = line.text.toLowerCase(Locale.ROOT);
-        String lower = name.toLowerCase(Locale.ROOT);
-        // Ignore the player's own messages, which start with "<Name>".
-        if (text.startsWith("<" + lower + ">")) {
+        if (isAdvancement(line.text, name)) {
+            stats.add("advancements", 1);
+            catSays("cat.advancement1", "cat.advancement2", "cat.advancement3");
             return;
+        }
+        if (!open && mentions(line.text, name)) {
+            toast(strings.get("chat.mention"), line.text);
+        }
+    }
+
+    /** "Name has made the advancement [...]" and its challenge and goal variants, in English and Russian. */
+    private static boolean isAdvancement(String text, String name) {
+        String lower = text.toLowerCase(Locale.ROOT);
+        String me = name.toLowerCase(Locale.ROOT);
+        if (!lower.startsWith(me + " ")) {
+            return false;
+        }
+        String[] markers = {"has made the advancement", "has completed the challenge", "has reached the goal",
+            "получил достижение", "получила достижение", "выполнил испытание", "выполнила испытание",
+            "достиг цели", "достигла цели"};
+        for (String marker : markers) {
+            if (lower.contains(marker)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether a chat line names the player as a whole word, not counting the player's own messages. */
+    static boolean mentions(String line, String name) {
+        if (name.isEmpty()) {
+            return false;
+        }
+        String text = line.toLowerCase(Locale.ROOT);
+        String lower = name.toLowerCase(Locale.ROOT);
+        // Ignore the player's own messages ("<Name> ...") and lines about the player rather than to them
+        // ("Name was slain by...", "Name joined the game").
+        if (text.startsWith("<" + lower + ">") || text.startsWith(lower + " ")) {
+            return false;
         }
         int at = text.indexOf(lower);
         while (at >= 0) {
@@ -313,10 +395,76 @@ public final class Overlay implements Function<Object[], Object> {
             int end = at + lower.length();
             boolean endOk = end == text.length() || !Character.isLetterOrDigit(text.charAt(end)) && text.charAt(end) != '_';
             if (startOk && endOk) {
-                toast(strings.get("chat.mention"), line.text);
-                return;
+                return true;
             }
             at = text.indexOf(lower, at + 1);
+        }
+        return false;
+    }
+
+    private void catSays(String... keys) {
+        if (cat == null || !options.cat) {
+            return;
+        }
+        String[] phrases = new String[keys.length];
+        for (int i = 0; i < keys.length; i++) {
+            phrases[i] = strings.get(keys[i]);
+        }
+        cat.say(phrases);
+    }
+
+    private void achievement(String id) {
+        toast(strings.get("ach.unlocked"), strings.get("ach." + id));
+        catSays("cat.achievement");
+    }
+
+    private void timerFired(Timers.Timer timer) {
+        stats.add("timers", 1);
+        toasts.add(new Toast(strings.get("tools.timerDone"), timer.label, System.currentTimeMillis() + 12000));
+        if (cat != null && options.cat) {
+            cat.say(timer.label);
+        }
+    }
+
+    private void screenshot(String name) {
+        stats.add("screenshots", 1);
+        game.update();
+        String where = game.available && game.inWorld ? game.blockPosition() : "";
+        screenshots.caption(name, instance, game.inWorld ? game.dimension : "", where);
+        String body = instance + (where.isEmpty() ? "" : " · " + where) + "\n" + name;
+        toast(strings.get("shot.saved"), body);
+        catSays("cat.shot1", "cat.shot2");
+    }
+
+    /** Once per frame, overlay open or not: game state, timers, stats, deaths and AFK. */
+    private void tickWorld(long now) {
+        game.update();
+        timers.tick(now);
+        stats.tick(now);
+        if (game.inWorld) {
+            if (lastHealth > 0 && game.health <= 0) {
+                stats.add("deaths", 1);
+                catSays("cat.death1", "cat.death2", "cat.death3");
+            }
+            lastHealth = game.health;
+        } else {
+            lastHealth = -1;
+        }
+        if (!afk && !open && game.inWorld && now - lastInput > AFK) {
+            afk = true;
+            catSays("cat.afk1", "cat.afk2");
+        }
+        if (now >= nextStatsSave) {
+            nextStatsSave = now + STATS_SAVE;
+            io.execute(stats.saveTask());
+        }
+    }
+
+    private void input() {
+        lastInput = System.currentTimeMillis();
+        if (afk) {
+            afk = false;
+            catSays("cat.back");
         }
     }
 
@@ -327,6 +475,7 @@ public final class Overlay implements Function<Object[], Object> {
             return false;
         }
         ensureUi();
+        input();
         boolean press = action != Keys.RELEASE;
         if (!press && !gameKeys.remove(key) && open) {
             // The game never saw this press (the overlay took it), so it must not see the release.
@@ -367,6 +516,7 @@ public final class Overlay implements Function<Object[], Object> {
     }
 
     boolean button(int button, int action) {
+        input();
         boolean press = action != Keys.RELEASE;
         if (!isOpen()) {
             if (press) {
@@ -382,6 +532,7 @@ public final class Overlay implements Function<Object[], Object> {
     }
 
     boolean cursor(double x, double y) {
+        input();
         if (!isOpen()) {
             return false;
         }
@@ -448,12 +599,13 @@ public final class Overlay implements Function<Object[], Object> {
             task.run();
         }
         long now = System.currentTimeMillis();
+        tickWorld(now);
         for (Iterator<Toast> it = toasts.iterator(); it.hasNext(); ) {
             if (it.next().until < now) {
                 it.remove();
             }
         }
-        if (!open && !options.hud && toasts.isEmpty()) {
+        if (!open && !options.hud && toasts.isEmpty() && (cat == null || !cat.talking(now))) {
             return false; // nothing on screen, so the game's frame stays untouched
         }
         if (!platform.hasWindow()) {
@@ -500,6 +652,7 @@ public final class Overlay implements Function<Object[], Object> {
             // LWJGL 2 ships no stb_truetype, so its games rasterise with java.awt.
             boolean awt = platform instanceof LegacyBackend;
             ui = new Ui(batch, font("Inter-Regular.ttf", awt), font("Inter-SemiBold.ttf", awt), platform);
+            cat = new Cat();
         } catch (IOException e) {
             throw new IllegalStateException(e);
         }
@@ -514,6 +667,12 @@ public final class Overlay implements Function<Object[], Object> {
             drawOverlay(w, h);
         } else if (options.hud) {
             perfView.drawHud(ui, w, h);
+        }
+        if (open) {
+            // Sits in the strip under the content card, next to the close hint.
+            cat.draw(ui, 16, h - 3, 0.75f, true, System.currentTimeMillis());
+        } else if (options.cat) {
+            cat.draw(ui, 16, h - 10, 1.5f, false, System.currentTimeMillis());
         }
         drawToasts(w, h);
     }
@@ -531,8 +690,10 @@ public final class Overlay implements Function<Object[], Object> {
 
         float tabsW = 0;
         float[] widths = new float[TABS.length];
+        // Narrow windows get tighter tabs so they stay clear of the brand and the clock.
+        float tabPad = w < 1000 ? 18 : 32;
         for (int i = 0; i < TABS.length; i++) {
-            widths[i] = ui.measure(ui.bold, 13, strings.get(TABS[i])) + 32;
+            widths[i] = ui.measure(ui.bold, 13, strings.get(TABS[i])) + tabPad;
             tabsW += widths[i] + 6;
         }
         float tx = (w - tabsW) / 2;
@@ -563,12 +724,25 @@ public final class Overlay implements Function<Object[], Object> {
         float y = cy + pad;
         float innerW = cardW - pad * 2;
         float innerH = cardH - pad * 2;
-        if (tab == 0) {
-            chatView.draw(ui, x, y, innerW, innerH);
-        } else if (tab == 1) {
-            notesView.draw(ui, x, y, innerW, innerH);
-        } else {
-            perfView.draw(ui, x, y, innerW, innerH);
+        switch (tab) {
+            case 0:
+                chatView.draw(ui, x, y, innerW, innerH);
+                break;
+            case 1:
+                notesView.draw(ui, x, y, innerW, innerH);
+                break;
+            case 2:
+                toolsView.draw(ui, x, y, innerW, innerH);
+                break;
+            case 3:
+                modsView.draw(ui, x, y, innerW, innerH);
+                break;
+            case 4:
+                profileView.draw(ui, x, y, innerW, innerH);
+                break;
+            default:
+                perfView.draw(ui, x, y, innerW, innerH);
+                break;
         }
 
         String hint = strings.get("hint.close");

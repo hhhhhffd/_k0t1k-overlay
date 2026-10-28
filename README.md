@@ -6,11 +6,26 @@ Vulkan backend or VulkanMod), on LWJGL 2 (Minecraft 1.8 to 1.12.2), GLFW or SDL3
 
 Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it.
 
-- **Chat**: the whole chat history across sessions, servers and instances, with a full-text search.
-  Click a message to copy it. Chat messages that mention the player's name show a toast.
+- **Chat**: the whole chat history across sessions, servers and instances, with a full-text search
+  and filters: mentions, private messages, one player's messages. Click a message to copy it. Chat
+  messages that mention the player's name show a toast.
 - **Notes**: notes that persist on disk and save automatically.
+- **Tools**: Overworld ↔ Nether coordinates (with "my position"), stacks and shulker boxes, timers and
+  alarms that survive a restart, and the latest screenshots. Each F2 screenshot shows a toast with the
+  instance and position.
+- **Mods**: the instance's mods with a search and what each one does (from the mod's metadata), with
+  links to Modrinth and the mod's homepage.
+- **Profile**: lifetime stats (play time, sessions, deaths, advancements, screenshots, crashes) and the
+  launcher's achievements on top of them.
 - **Performance**: FPS, frame time, 1% low, a frame time graph, heap, GC and the game's CPU load,
   plus an optional HUD in a corner of the screen.
+
+The launcher's cat sits in a corner and reacts to deaths, advancements, a five minute AFK, timers,
+screenshots and achievements with a speech bubble (it can be turned off in Profile).
+
+The player's position, dimension and health are read by reflection on `net.minecraft` classes, so
+they only work where the game runs with Mojang names: Minecraft 26.1+ and NeoForge. Elsewhere the
+position button is hidden and deaths are not counted. Advancements are read from the chat.
 
 ## How it works
 
@@ -134,10 +149,15 @@ The data folder contains:
 - `chat-history.tsv`: one message per line, `epoch ms TAB server TAB text`, where backslash escapes
   tab, newline and itself
 - `notes/<id>.txt`: one note per file
-- `overlay.properties`: the HUD settings
+- `overlay.properties`: the HUD and cat settings
+- `stats.properties`: lifetime counters and unlocked achievements; each game adds its own changes, so
+  games running at once do not overwrite each other
+- `session-<hash>.lock`: present while a game folder is running; one left behind counts as a crash
+- `timers.tsv`: `due epoch ms TAB length ms TAB label`
+- `screenshots.tsv`: a caption per screenshot, `file TAB epoch ms TAB instance TAB dimension TAB x y z`
 
-The agent writes nothing else. On exit, a shutdown hook stores the last chat lines and any unsaved
-notes. If anything fails, it prints `[k0t1k-overlay] ...` with a stack trace to the game's output
+The agent writes nothing else. On exit, a shutdown hook stores the last chat lines, any unsaved
+notes and the stats. If anything fails, it prints `[k0t1k-overlay] ...` with a stack trace to the game's output
 and disables itself, and the game keeps running.
 
 ## Known limitations

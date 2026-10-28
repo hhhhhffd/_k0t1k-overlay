@@ -6,8 +6,12 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
-/** The chat tab: the whole stored history, newest at the bottom, with a full-text search. */
+/**
+ * The chat tab: the whole stored history, newest at the bottom, with a full-text search and filters
+ * for mentions, private messages and one player's messages.
+ */
 final class ChatView {
     private static final float TEXT = 14;
     private static final float TIME_COLUMN = 46;
@@ -25,6 +29,21 @@ final class ChatView {
     private String activeQuery = "";
     private boolean searching;
     private List<ChatHistory.Line> results;
+
+    /** 0 everything, 1 mentions of the player, 2 private messages. */
+    private int filter;
+    private final TextEdit player = new TextEdit();
+    private static final String[] FILTERS = {"chat.all", "chat.mentions", "chat.private"};
+    /** Markers of private messages in vanilla and on common servers (EssentialsX, CMI, Hypixel...). */
+    private static final String[] PRIVATE = {
+        "whispers to you", "you whisper to", "шепчет вам", "вы шепчете", "-> me]", "-> you]", "-> я]",
+        "[pm]", "[msg]", "(msg)", "[лс]", "from ", "to ",
+    };
+    private List<ChatHistory.Line> filtered;
+    private List<ChatHistory.Line> filteredBase;
+    private int filteredVersion = -1;
+    private int filteredSize = -1;
+    private String filteredKey = "";
 
     /** Distance of the view's bottom from the bottom of the content; 0 follows new messages. */
     private float scroll;
@@ -62,12 +81,25 @@ final class ChatView {
         updateSearch();
 
         float barH = 34;
-        ui.field(search, x, y, Math.min(360, w - 160), barH, false, strings.get("chat.search"));
+        float searchW = Math.min(300, w * 0.3f);
+        ui.field(search, x, y, searchW, barH, false, strings.get("chat.search"));
+        float playerW = Math.min(170, w * 0.17f);
+        ui.field(player, x + searchW + 8, y, playerW, barH, false, strings.get("chat.player"));
+        float fx = x + searchW + playerW + 20;
+        for (int i = 0; i < FILTERS.length; i++) {
+            String label = strings.get(FILTERS[i]);
+            float pw = ui.measure(ui.bold, 13, label) + 24;
+            if (ui.pill(fx, y + 2, pw, barH - 4, label, filter == i)) {
+                filter = i;
+                scroll = 0;
+            }
+            fx += pw + 4;
+        }
         String status = results != null || searching
                 ? (searching ? strings.get("chat.searching") : strings.format("chat.found", results.size()))
                 : strings.format("chat.count", history.lines.size()) + " · " + strings.get("chat.copyHint");
-        ui.textFit(ui.regular, 12, x + Math.min(360, w - 160) + 14, y + (barH - ui.lineHeight(ui.regular, 12)) / 2,
-                w - Math.min(360, w - 160) - 14, Ui.FAINT, status);
+        ui.textFit(ui.regular, 12, fx + 10, y + (barH - ui.lineHeight(ui.regular, 12)) / 2,
+                x + w - fx - 10, Ui.FAINT, status);
 
         float listY = y + barH + 12;
         float listH = h - barH - 12;
@@ -217,6 +249,7 @@ final class ChatView {
     private void layout(Ui ui, float width) {
         List<ChatHistory.Line> source = results != null ? results : searching ? NONE : history.lines;
         int version = results != null ? 0 : history.version;
+        source = filter(source, version);
         // The header above the first message ("no messages yet") changes with it, so start over then.
         boolean sameShape = source == laidOut && width == laidOutWidth && ui.scale == laidOutScale && laidOutCount > 0;
         if (sameShape && version == laidOutVersion) {
@@ -271,6 +304,68 @@ final class ChatView {
             rows.add(row);
             total += row.h;
         }
+    }
+
+    /**
+     * The lines that pass the filters, as a list that stays the same object until the lines or the
+     * filters change, so the layout is only rebuilt then.
+     */
+    private List<ChatHistory.Line> filter(List<ChatHistory.Line> base, int version) {
+        String name = player.value().trim().toLowerCase(Locale.ROOT);
+        if (filter == 0 && name.isEmpty()) {
+            return base;
+        }
+        String key = filter + "\n" + name;
+        if (base == filteredBase && version == filteredVersion && base.size() == filteredSize && key.equals(filteredKey)) {
+            return filtered;
+        }
+        List<ChatHistory.Line> out = new ArrayList<>();
+        String me = overlay.username();
+        for (ChatHistory.Line line : base) {
+            if (filter == 1 && !Overlay.mentions(line.text, me)) {
+                continue;
+            }
+            if (filter == 2 && !isPrivate(line.text)) {
+                continue;
+            }
+            if (!name.isEmpty() && !fromPlayer(line.text, name)) {
+                continue;
+            }
+            out.add(line);
+        }
+        filtered = out;
+        filteredBase = base;
+        filteredVersion = version;
+        filteredSize = base.size();
+        filteredKey = key;
+        return out;
+    }
+
+    static boolean isPrivate(String text) {
+        String lower = text.toLowerCase(Locale.ROOT);
+        for (String marker : PRIVATE) {
+            if (marker.endsWith(" ") ? lower.startsWith(marker) : lower.contains(marker)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a line was written by the player: "&lt;Name&gt; text" in vanilla, "[Rank] Name: text" or
+     * "Name » text" on most servers. Looks only at the part before the message itself.
+     */
+    static boolean fromPlayer(String text, String lowerName) {
+        String lower = text.toLowerCase(Locale.ROOT);
+        int end = lower.indexOf("> ");
+        for (String separator : new String[] {": ", " » ", " > ", " -> "}) {
+            int at = lower.indexOf(separator);
+            if (at >= 0 && (end < 0 || at < end)) {
+                end = at;
+            }
+        }
+        // Without a sender part the line is a system message (deaths, joins), not something the player wrote.
+        return end >= 0 && lower.substring(0, end + 1).contains(lowerName);
     }
 
     private void addHeader(String text, ChatHistory.Line line) {
