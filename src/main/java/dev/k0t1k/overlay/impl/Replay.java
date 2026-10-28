@@ -31,7 +31,7 @@ import javax.imageio.stream.MemoryCacheImageOutputStream;
 /**
  * The replay buffer: the last {@link #SECONDS} seconds of the game, kept as JPEG frames in memory
  * (about a megabyte a second), saved on request as a GIF, an MJPEG AVI or, when ffmpeg is installed,
- * an MP4. Frames are read back on the render thread by {@link GlCapture}; compressing and saving run on
+ * an MP4. Frames are read back on the render thread by {@link GlCapture} or the Vulkan renderer; compressing and saving run on
  * a worker thread of their own so the game never waits for them.
  */
 final class Replay {
@@ -75,6 +75,13 @@ final class Replay {
     Replay(Path gameDir, Consumer<Throwable> onError) {
         this.folder = gameDir.resolve("replays");
         this.onError = onError;
+    }
+
+    /** The size a {@code width} x {@code height} frame is captured at: {w, h}, both even. */
+    static int[] scaled(int width, int height) {
+        int w = Math.min(width, MAX_WIDTH) & ~1;
+        int h = Math.max(2, Math.round(height * (w / (float) width))) & ~1;
+        return new int[] {w, h};
     }
 
     /** Whether the render thread should read back a frame now; keeps to {@link #FPS}. */

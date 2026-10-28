@@ -67,11 +67,12 @@ button is hidden and deaths are not counted. Advancements are read from the chat
   the code and unpacks them into `<dataDir>/browser`. The bridge (`src/cef`: `OverlayBrowser`, a
   `CefBrowser_N` that keeps its pixels instead of painting into AWT, and `CefEngine`) ships inside the
   agent as `cef-bridge.jar` and loads next to JCEF in a class loader of its own. Windows and Linux on
-  x64; the page is drawn by the OpenGL renderer only. CEF needs `--no-first-run` off screen: its EULA
+  x64; the page is drawn by the OpenGL 3.2 and Vulkan renderers (not on LWJGL 2). CEF needs `--no-first-run` off screen: its EULA
   dialog would otherwise end the browser process with exit code 28.
 - **Replay.** Frames are kept as JPEG (about 1 MB a second) and saved to `<gameDir>/replays` as a GIF
   or a video (MP4 when `ffmpeg` is on PATH, otherwise a Motion-JPEG AVI). Frames are scaled down on the
-  GPU and read back through pixel buffers with fences, so the game never waits for them. OpenGL only.
+  GPU and read back through pixel buffers with fences (OpenGL) or a blit and a host buffer behind the
+  frame's fence (Vulkan), so the game never waits for them. Not on LWJGL 2.
 - **Music.** Windows uses the system media controls through a PowerShell child (`media.ps1`), Linux
   uses `playerctl`.
 - **Crash window.** When the game exits after writing a crash report, the shutdown hook writes what
@@ -118,7 +119,7 @@ dispatcher can replace the arguments or skip the call. After the call, it can re
 |---|---|
 | `glfwSwapBuffers`, `SDL_GL_SwapWindow` | OpenGL: draws the overlay over the finished frame |
 | `vkQueuePresentKHR` | Vulkan: draws into the swapchain image right before it is presented |
-| `vkCreateSwapchainKHR`, `vkDestroySwapchainKHR`, `vkDestroyDevice`, `vkGetDeviceQueue(2)` | Vulkan: tracks swapchains and queue families, and adds colour attachment usage to swapchains (Minecraft only blits into them) |
+| `vkCreateSwapchainKHR`, `vkDestroySwapchainKHR`, `vkDestroyDevice`, `vkGetDeviceQueue(2)` | Vulkan: tracks swapchains and queue families, and adds colour attachment usage to swapchains (Minecraft only blits into them), plus transfer source usage where the surface allows it, for the replay buffer |
 | `glfwSet{Key,Char,CharMods,MouseButton,CursorPos,Scroll}Callback` | GLFW: wraps the game's callbacks, so the overlay sees input first and swallows it while open |
 | `SDL_PollEvent` | SDL: the overlay inspects each event and neutralises the ones it takes by rewriting their type to `SDL_EVENT_USER`, which the game ignores |
 | `glfwGetKey`, `glfwGetMouseButton` | GLFW: keys and buttons read as released while the overlay is open |

@@ -9,7 +9,7 @@ import java.net.URLEncoder;
 /**
  * The browser tab: a real Chromium page (see {@link Browser}) with back, forward, reload, an address
  * bar and quick links. Mouse and keyboard over the page go to Chromium; the page's pixels are drawn as
- * the batch's image, so this works where the overlay draws with OpenGL.
+ * the batch's image, so this works where the renderer draws images (OpenGL 3.2 and Vulkan).
  */
 final class BrowserView {
     static final String HOME = "https://minecraft.wiki/";
@@ -89,7 +89,7 @@ final class BrowserView {
             return;
         }
         if (!overlay.imagesSupported()) {
-            center(ui, x, py, w, ph, strings.get("browser.glOnly"), Ui.FAINT);
+            center(ui, x, py, w, ph, strings.get("browser.unsupportedRenderer"), Ui.FAINT);
             return;
         }
         float vx = x + 1;

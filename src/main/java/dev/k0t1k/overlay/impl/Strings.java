@@ -163,8 +163,8 @@ final class Strings {
         add("browser.failed", "The browser failed: %s", "Браузер не запустился: %s");
         add("browser.retry", "Try again", "Попробовать снова");
         add("browser.unsupported", "The browser needs Windows or Linux on x64", "Браузеру нужен Windows или Linux на x64");
-        add("browser.glOnly", "The browser shows in OpenGL games; this one renders another way",
-                "Браузер показывается в играх на OpenGL, а эта рисует иначе");
+        add("browser.unsupportedRenderer", "The browser cannot draw with this game's renderer",
+                "Браузер не умеет рисоваться рендерером этой игры");
         add("replay.title", "Replay", "Повтор");
         add("replay.toggle", "Keep the last 30 s", "Записывать последние 30 с");
         add("replay.video", "Video", "Видео");
@@ -172,8 +172,8 @@ final class Strings {
         add("replay.save", "Save 30 s", "Сохранить 30 с");
         add("replay.hint", "Shift+F2 in game · video is MP4 with ffmpeg installed, AVI otherwise",
                 "Shift+F2 в игре · видео в MP4, если стоит ffmpeg, иначе AVI");
-        add("replay.glOnly", "Recording works with OpenGL; this game renders another way",
-                "Запись работает на OpenGL, а эта игра рисует иначе");
+        add("replay.unsupported", "Recording does not work with this game's renderer",
+                "Запись не работает с рендерером этой игры");
         add("replay.off", "Recording is off", "Запись выключена");
         add("replay.saving", "Saving the last 30 seconds…", "Сохраняю последние 30 секунд…");
         add("replay.saved", "Replay saved", "Повтор сохранён");

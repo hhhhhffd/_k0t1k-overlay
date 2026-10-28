@@ -340,7 +340,7 @@ public final class Overlay implements Function<Object[], Object> {
     /** Saves the replay buffer (Shift+F2 or the tools tab). */
     void saveReplay() {
         if (!replayAvailable()) {
-            toast(strings.get("replay.title"), strings.get(options.replay ? "replay.glOnly" : "replay.off"));
+            toast(strings.get("replay.title"), strings.get(options.replay ? "replay.unsupported" : "replay.off"));
             return;
         }
         if (replay.saving()) {
@@ -357,9 +357,30 @@ public final class Overlay implements Function<Object[], Object> {
         }));
     }
 
-    /** Whether frames are being recorded: OpenGL, the setting on, nothing broken. */
+    /** Whether frames are being recorded: the setting on, a renderer that reads frames back, nothing broken. */
     boolean replayAvailable() {
-        return options.replay && capture != null && !captureBroken;
+        return replayWanted() && (capture != null || vk != null && vk.recording());
+    }
+
+    /** Whether the replay buffer wants frames at all; cheaper than {@link #replayDue}. */
+    boolean replayWanted() {
+        return options.replay && !captureBroken;
+    }
+
+    /** Vulkan: whether to read back this frame for the replay buffer; when true the frame is claimed. */
+    boolean replayDue(long now) {
+        return replayWanted() && replay.due(now);
+    }
+
+    /** Vulkan: a frame read back for the replay buffer. */
+    void replayFrame(GlCapture.Frame frame) {
+        replay.add(frame);
+    }
+
+    /** Vulkan: reading frames back failed; the replay buffer stays off for this game, the overlay stays. */
+    void replayFailed(Throwable error) {
+        captureBroken = true;
+        report(error);
     }
 
     Replay replay() {
@@ -378,9 +399,9 @@ public final class Overlay implements Function<Object[], Object> {
         return media;
     }
 
-    /** Whether the renderer can draw pictures (the browser's page): only the OpenGL 3.2 one so far. */
+    /** Whether the renderer can draw pictures (the browser's page): OpenGL 3.2 and Vulkan, not LWJGL 2's. */
     boolean imagesSupported() {
-        return gl != null;
+        return gl != null || vk != null;
     }
 
     /** Disables the overlay after a failure in drawing or input, leaving the game untouched. */
@@ -694,10 +715,9 @@ public final class Overlay implements Function<Object[], Object> {
         if (!replay.due(now)) {
             return;
         }
-        int w = Math.min(width, Replay.MAX_WIDTH) & ~1;
-        int h = Math.max(2, Math.round(height * (w / (float) width))) & ~1;
+        int[] size = Replay.scaled(width, height);
         try {
-            capture.capture(width, height, w, h, now, replay::add);
+            capture.capture(width, height, size[0], size[1], now, replay::add);
         } catch (RuntimeException | LinkageError e) {
             // The replay buffer is optional: turn it off, keep the overlay.
             captureBroken = true;

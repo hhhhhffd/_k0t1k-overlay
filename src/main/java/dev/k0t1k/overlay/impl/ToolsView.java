@@ -287,7 +287,7 @@ final class ToolsView {
             overlay.saveReplay();
         }
         String hint = overlay.replayAvailable() ? strings.get("replay.hint")
-                : options.replay ? strings.get("replay.glOnly") : strings.get("replay.off");
+                : options.replay ? strings.get("replay.unsupported") : strings.get("replay.off");
         ui.textFit(ui.regular, 12, x, y + 34, w, Ui.FAINT, hint);
         return y + 56;
     }

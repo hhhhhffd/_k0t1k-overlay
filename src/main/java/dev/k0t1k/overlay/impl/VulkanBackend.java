@@ -13,4 +13,7 @@ interface VulkanBackend {
 
     /** Stops drawing after a failure; later presents pass through untouched. */
     void disable();
+
+    /** Whether the game's frames can be read back for the replay buffer. */
+    boolean recording();
 }

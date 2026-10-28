@@ -34,7 +34,7 @@ final class Options {
     int hudCorner;
     /** Whether the cat pops up to react to deaths, advancements, AFK and timers. */
     boolean cat = true;
-    /** Whether the last seconds of the game are kept for Shift+F2 (OpenGL only). */
+    /** Whether the last seconds of the game are kept for Shift+F2 (OpenGL 3.2 and Vulkan). */
     boolean replay = true;
     /** "video" (MP4 with ffmpeg, otherwise AVI) or "gif". */
     String replayFormat = "video";
