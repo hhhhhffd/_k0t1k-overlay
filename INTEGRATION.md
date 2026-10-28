@@ -24,7 +24,7 @@ see [README.md](README.md). Paths like `packages/core/...` are in the launcher r
 - **Build:** run `./gradlew shadowJar`. It needs JDK 21 or newer to build; the Gradle wrapper and
   toolchain handle the rest. It does not need a shader compiler, because the SPIR-V is committed.
 - **Output:** `build/libs/k0t1k-overlay-<version>.jar`, about 5.4 MB. The
-  version comes from `build.gradle.kts` (`version = "0.2.0"`) and also appears in the manifest as
+  version comes from `build.gradle.kts` (`version = "0.2.1"`) and also appears in the manifest as
   `Implementation-Version`.
 - **Contents:** one jar for every OS, CPU, loader and Minecraft version. There are no natives
   inside; it uses the LWJGL the game ships. Byte Buddy is shaded under
