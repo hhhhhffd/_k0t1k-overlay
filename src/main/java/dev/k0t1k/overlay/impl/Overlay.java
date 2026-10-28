@@ -65,6 +65,11 @@ public final class Overlay implements Function<Object[], Object> {
     private LegacyBackend legacy;
     private boolean broken;
     private volatile boolean open;
+    /**
+     * The thread that draws frames, where the game also reads input and changes the cursor. Mods like
+     * Ixeris poll the window on another thread and replay the render thread's window calls there.
+     */
+    private volatile Thread renderThread;
     private int tab;
     private final int[] sizes = new int[4];
     /** Framebuffer pixels per window coordinate, from the last frame; converts cursor positions. */
@@ -140,8 +145,8 @@ public final class Overlay implements Function<Object[], Object> {
                     return glfw.onInputMode((Integer) args[1], (Integer) args[2]) ? Boolean.TRUE : null;
                 case "glfwGetKey":
                 case "glfwGetMouseButton":
-                    // Keys and buttons read as released while the overlay is open.
-                    return isOpen() ? Integer.valueOf(0) : null;
+                    // Keys and buttons read as released by the game while the overlay is open.
+                    return isOpen() && onRenderThread() ? Integer.valueOf(0) : null;
                 case "glfwSetKeyCallback":
                 case "glfwSetCharCallback":
                 case "glfwSetCharModsCallback":
@@ -274,6 +279,14 @@ public final class Overlay implements Function<Object[], Object> {
 
     boolean isOpen() {
         return open && !broken;
+    }
+
+    /**
+     * Whether the current call comes from the render thread. Calls from other threads are replays of
+     * render thread calls the overlay already saw (Ixeris), so they pass untouched.
+     */
+    boolean onRenderThread() {
+        return Thread.currentThread() == renderThread;
     }
 
     void toast(String title, String body) {
@@ -429,6 +442,7 @@ public final class Overlay implements Function<Object[], Object> {
      * {@code width} x {@code height} pixels. Returns whether there is something to draw.
      */
     boolean buildFrame(int width, int height) {
+        renderThread = Thread.currentThread();
         perf.frame();
         for (Runnable task; (task = renderQueue.poll()) != null; ) {
             task.run();

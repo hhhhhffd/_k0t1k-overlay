@@ -64,8 +64,10 @@ final class SdlPlatform implements SdlBackend {
     @Override
     public Object call(String method, Object[] args, Object result, boolean exit) {
         if ("SDL_PollEvent".equals(method)) {
-            // SDL_PollEvent(NULL) only asks whether events are pending.
-            return exit && Boolean.TRUE.equals(result) && args[0] != null ? onEvent((SDL_Event) args[0]) : null;
+            // SDL_PollEvent(NULL) only asks whether events are pending. Ixeris polls SDL on its own
+            // thread and hands the events on; the overlay looks at them when the game reads them.
+            return exit && Boolean.TRUE.equals(result) && args[0] != null && overlay.onRenderThread()
+                    ? onEvent((SDL_Event) args[0]) : null;
         }
         if (exit) {
             if (method.equals(skipped)) {
@@ -106,8 +108,9 @@ final class SdlPlatform implements SdlBackend {
         return Boolean.TRUE;
     }
 
+    /** Ixeris replays the render thread's calls, the overlay's own included, on its polling thread. */
     private boolean holdBack() {
-        return !ownCall && overlay.isOpen();
+        return !ownCall && overlay.isOpen() && overlay.onRenderThread();
     }
 
     private Object onEvent(SDL_Event event) {

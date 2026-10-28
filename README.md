@@ -34,6 +34,11 @@ the arguments or skip the call. After the call, it can replace the return value.
 
 A key or button release still reaches the game if the game saw the press, so held keys do not stick.
 
+Only calls made on the render thread are filtered. Ixeris polls GLFW or SDL on a thread of its own and
+repeats the render thread's window calls there, the overlay's own cursor calls included; those
+repeats pass untouched, or the overlay would hold back its own cursor release (tested with Ixeris
+4.6.10 on Fabric 26.2).
+
 The advice only uses JDK types stored in the system properties, which every class loader can see.
 The overlay itself (`dev.k0t1k.overlay.impl`) loads in a child-first class loader whose parent is
 the loader of the hooked LWJGL class. That way it links against the game's own LWJGL, including

@@ -121,9 +121,12 @@ final class GlfwPlatform implements Platform {
         }
     }
 
-    /** Hook on {@code glfwSetInputMode}: returns true to skip the game's call. */
+    /**
+     * Hook on {@code glfwSetInputMode}: returns true to skip the game's call. Under Ixeris the overlay's
+     * own calls run a second time on its polling thread, where they must not be mistaken for the game's.
+     */
     boolean onInputMode(int mode, int value) {
-        if (mode != GLFW_CURSOR || ownCursorCall || !overlay.isOpen()) {
+        if (mode != GLFW_CURSOR || ownCursorCall || !overlay.isOpen() || !overlay.onRenderThread()) {
             return false;
         }
         pendingMode = value;
