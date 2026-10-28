@@ -20,6 +20,17 @@ Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it
 - **Performance**: FPS, frame time, 1% low, a frame time graph, heap, GC and the game's CPU load,
   plus an optional HUD in a corner of the screen.
 
+- **Browser**: a real Chromium (JCEF, off-screen rendering) in its own tab, with back, forward,
+  reload, an address bar that also searches, and quick links (Minecraft Wiki, Modrinth, CurseForge,
+  YouTube). Mouse, wheel and keyboard go to the page; logins and cookies persist in
+  `<dataDir>/browser/profile`. Chromium is about 170 MB, so it is not in the agent: the first time the
+  player clicks "Download the browser", `Browser` fetches `me.friwi:jcef-api` and the platform's
+  `jcef-natives-*` (jcefmaven's builds) from Maven Central, checks each against the SHA-256 pinned in
+  the code and unpacks them into `<dataDir>/browser`. The bridge (`src/cef`: `OverlayBrowser`, a
+  `CefBrowser_N` that keeps its pixels instead of painting into AWT, and `CefEngine`) ships inside the
+  agent as `cef-bridge.jar` and loads next to JCEF in a class loader of its own. Windows and Linux on
+  x64; the page is drawn by the OpenGL renderer only. CEF needs `--no-first-run` off screen: its EULA
+  dialog would otherwise end the browser process with exit code 28.
 - **Replay**: the last 30 seconds of the game are kept in memory as JPEG frames (about 1 MB a second);
   **Shift+F2** or the button in Tools saves them to `<gameDir>/replays` as a GIF or a video (MP4 when
   `ffmpeg` is on PATH, otherwise a Motion-JPEG AVI). Frames are scaled down on the GPU and read back
@@ -170,6 +181,8 @@ The data folder contains:
 - `timers.tsv`: `due epoch ms TAB length ms TAB label`
 - `screenshots.tsv`: a caption per screenshot, `file TAB epoch ms TAB instance TAB dimension TAB x y z`
 - `crashes/crash_<time>.txt`: the crash window's notes from the live game
+- `browser/`: the downloaded JCEF (`jcef-api.jar`, `cef-bridge.jar`, `cef-152.0.6/`) and the browser
+  profile
 
 Besides these, the agent writes only saved replays to `<gameDir>/replays`. On exit, a shutdown hook stores the last chat lines, any unsaved
 notes and the stats. If anything fails, it prints `[k0t1k-overlay] ...` with a stack trace to the game's output

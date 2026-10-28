@@ -13,8 +13,9 @@ import java.util.List;
  *
  * <p>Vertex layout ({@link #STRIDE} bytes): position (2 floats), uv (2 floats), params (4 floats:
  * half width, half height, corner radius, mode) and colour (RGBA bytes). Mode 1 samples the atlas and
- * uv is a texture coordinate; mode 0 is a rounded box and uv is the offset from its centre. Quads are
- * drawn as the index pattern 0 1 2 2 3 0.
+ * uv is a texture coordinate; mode 2 samples the {@link #image} (the browser's page, BGRA) the same way;
+ * mode 0 is a rounded box and uv is the offset from its centre. Quads are drawn as the index pattern
+ * 0 1 2 2 3 0.
  */
 final class Batch {
     static final int STRIDE = (2 + 2 + 4) * 4 + 4;
@@ -45,6 +46,12 @@ final class Batch {
     final ByteBuffer atlas = ByteBuffer.allocateDirect(ATLAS * ATLAS);
     /** The atlas region changed since the renderer last uploaded it, {x0, y0, x1, y1}; x0 > x1 when clean. */
     final int[] dirty = {ATLAS, ATLAS, 0, 0};
+
+    /** One picture per frame for mode 2 quads: BGRA, top-down rows, replaced when its version changes. */
+    ByteBuffer image;
+    int imageWidth;
+    int imageHeight;
+    long imageVersion;
 
     void begin(int width, int height) {
         this.width = width;
@@ -124,6 +131,11 @@ final class Batch {
 
     void glyph(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, int argb) {
         quad(x0, y0, x1, y1, u0, v0, u1, v1, 0, 0, 0, 1, argb);
+    }
+
+    /** Draws the whole {@link #image} into the rectangle; the colour's alpha fades it. */
+    void image(float x, float y, float w, float h, int argb) {
+        quad(x, y, x + w, y + h, 0, 0, 1, 1, 0, 0, 0, 2, argb);
     }
 
     private void quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1,

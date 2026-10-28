@@ -9,9 +9,11 @@ import org.lwjgl.opengl.GLCapabilities;
 
 import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE;
+import static org.lwjgl.opengl.GL12.GL_BGRA;
 import static org.lwjgl.opengl.GL12.GL_TEXTURE_MAX_LEVEL;
 import static org.lwjgl.opengl.GL13.GL_ACTIVE_TEXTURE;
 import static org.lwjgl.opengl.GL13.GL_TEXTURE0;
+import static org.lwjgl.opengl.GL13.GL_TEXTURE1;
 import static org.lwjgl.opengl.GL13.glActiveTexture;
 import static org.lwjgl.opengl.GL14.*;
 import static org.lwjgl.opengl.GL15.*;
@@ -37,12 +39,18 @@ final class GlRenderer {
             + "  gl_Position = vec4(aPos.x / uViewport.x * 2.0 - 1.0, 1.0 - aPos.y / uViewport.y * 2.0, 0.0, 1.0);\n"
             + "}\n";
     // vParams = (half width, half height, corner radius, mode); mode 1 samples the glyph atlas and
-    // vUv is a texture coordinate, mode 0 is a rounded box and vUv is the offset from its centre.
+    // vUv is a texture coordinate, mode 2 samples the image the same way, mode 0 is a rounded box and
+    // vUv is the offset from its centre.
     private static final String FRAGMENT = "#version 150\n"
             + "uniform sampler2D uAtlas;\n"
+            + "uniform sampler2D uImage;\n"
             + "in vec2 vUv; in vec4 vColor; in vec4 vParams;\n"
             + "out vec4 fragColor;\n"
             + "void main() {\n"
+            + "  if (vParams.w > 1.5) {\n"
+            + "    fragColor = vec4(texture(uImage, vUv).rgb, vColor.a);\n"
+            + "    return;\n"
+            + "  }\n"
             + "  if (vParams.w > 0.5) {\n"
             + "    fragColor = vec4(vColor.rgb, vColor.a * texture(uAtlas, vUv).r);\n"
             + "    return;\n"
@@ -61,6 +69,8 @@ final class GlRenderer {
     private final int vbo;
     private final int ebo;
     private final int atlas;
+    private final int image;
+    private long imageVersion = -1;
     private final boolean samplers;
     private int height;
 
@@ -124,8 +134,19 @@ final class GlRenderer {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, Batch.ATLAS, Batch.ATLAS, 0, GL_RED, GL_UNSIGNED_BYTE,
                     (ByteBuffer) null);
 
+            image = glGenTextures();
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, image);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+            glActiveTexture(GL_TEXTURE0);
+
             glUseProgram(program);
             glUniform1i(glGetUniformLocation(program, "uAtlas"), 0);
+            glUniform1i(glGetUniformLocation(program, "uImage"), 1);
         } finally {
             restoreState();
         }
@@ -197,6 +218,26 @@ final class GlRenderer {
                 glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
                 batch.atlasUploaded();
             }
+            if (batch.image != null && batch.imageVersion != imageVersion) {
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, image);
+                if (samplers) {
+                    org.lwjgl.opengl.GL33.glBindSampler(1, 0);
+                }
+                ByteBuffer pixels = batch.image.duplicate();
+                pixels.position(0).limit(batch.imageWidth * batch.imageHeight * 4);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, batch.imageWidth, batch.imageHeight, 0, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
+                imageVersion = batch.imageVersion;
+                glActiveTexture(GL_TEXTURE0);
+            }
+            if (batch.image != null) {
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, image);
+                if (samplers) {
+                    org.lwjgl.opengl.GL33.glBindSampler(1, 0);
+                }
+                glActiveTexture(GL_TEXTURE0);
+            }
             // A fresh store each time, so the driver does not wait for the previous draw.
             glBufferData(GL_ARRAY_BUFFER, batch.vertices, GL_STREAM_DRAW);
             for (Batch.Draw d : batch.draws) {
@@ -231,6 +272,9 @@ final class GlRenderer {
         saved[i++] = get(GL_VERTEX_ARRAY_BINDING);
         saved[i++] = get(GL_ARRAY_BUFFER_BINDING);
         saved[i++] = get(GL_ACTIVE_TEXTURE);
+        glActiveTexture(GL_TEXTURE1);
+        saved[i++] = get(GL_TEXTURE_BINDING_2D);
+        saved[i++] = samplers ? get(org.lwjgl.opengl.GL33.GL_SAMPLER_BINDING) : 0;
         glActiveTexture(GL_TEXTURE0);
         saved[i++] = get(GL_TEXTURE_BINDING_2D);
         saved[i++] = samplers ? get(org.lwjgl.opengl.GL33.GL_SAMPLER_BINDING) : 0;
@@ -276,6 +320,12 @@ final class GlRenderer {
         glBindVertexArray(saved[i++]);
         glBindBuffer(GL_ARRAY_BUFFER, saved[i++]);
         int activeTexture = saved[i++];
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, saved[i++]);
+        int sampler1 = saved[i++];
+        if (samplers) {
+            org.lwjgl.opengl.GL33.glBindSampler(1, sampler1);
+        }
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, saved[i++]);
         int sampler = saved[i++];

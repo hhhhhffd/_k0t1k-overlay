@@ -152,6 +152,19 @@ final class Strings {
         add("cat.achievement", "Mrrr, an achievement!", "Мрр, ачивка!");
         add("cat.replay", "That one's a keeper!", "Это надо сохранить!");
         add("media.now", "Now playing", "Сейчас играет");
+        add("tab.browser", "Browser", "Браузер");
+        add("browser.address", "Search or type an address", "Поиск или адрес сайта");
+        add("browser.install", "The browser is Chromium; it downloads once (about %s MB) and stays for every game.",
+                "Браузер — это Chromium, он скачается один раз (около %s МБ) и останется для всех игр.");
+        add("browser.download", "Download the browser", "Скачать браузер");
+        add("browser.downloading", "Downloading Chromium… %d%%", "Скачиваю Chromium… %d%%");
+        add("browser.starting", "Starting the browser…", "Запускаю браузер…");
+        add("browser.loading", "Loading…", "Загрузка…");
+        add("browser.failed", "The browser failed: %s", "Браузер не запустился: %s");
+        add("browser.retry", "Try again", "Попробовать снова");
+        add("browser.unsupported", "The browser needs Windows or Linux on x64", "Браузеру нужен Windows или Linux на x64");
+        add("browser.glOnly", "The browser shows in OpenGL games; this one renders another way",
+                "Браузер показывается в играх на OpenGL, а эта рисует иначе");
         add("replay.title", "Replay", "Повтор");
         add("replay.toggle", "Keep the last 30 s", "Записывать последние 30 с");
         add("replay.video", "Video", "Видео");

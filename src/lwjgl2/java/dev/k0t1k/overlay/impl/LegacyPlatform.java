@@ -151,6 +151,8 @@ final class LegacyPlatform implements LegacyBackend {
             case Keyboard.KEY_UP: return Keys.UP;
             case Keyboard.KEY_HOME: return Keys.HOME;
             case Keyboard.KEY_F2: return Keys.F2;
+            case Keyboard.KEY_PRIOR: return Keys.PAGE_UP;
+            case Keyboard.KEY_NEXT: return Keys.PAGE_DOWN;
             case Keyboard.KEY_END: return Keys.END;
             case Keyboard.KEY_A: return Keys.A;
             case Keyboard.KEY_C: return Keys.C;

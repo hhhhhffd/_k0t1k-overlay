@@ -26,7 +26,7 @@ import org.lwjgl.opengl.GL11;
  */
 public final class Overlay implements Function<Object[], Object> {
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm");
-    private static final String[] TABS = {"tab.chat", "tab.notes", "tab.tools", "tab.mods", "tab.profile", "tab.perf"};
+    private static final String[] TABS = {"tab.chat", "tab.browser", "tab.notes", "tab.tools", "tab.mods", "tab.profile", "tab.perf"};
     /** No input for this long while playing counts as AFK, and the cat says so. */
     private static final long AFK = 5 * 60_000;
     /** How often the lifetime stats are written. */
@@ -74,6 +74,8 @@ public final class Overlay implements Function<Object[], Object> {
     /** Set when reading frames back failed; the replay buffer then stays off for this game. */
     private boolean captureBroken;
     private final CrashGuard crashGuard;
+    private final Browser browser;
+    private final BrowserView browserView;
     private long lastInput = System.currentTimeMillis();
     private boolean afk;
     private long nextStatsSave = System.currentTimeMillis() + STATS_SAVE;
@@ -159,6 +161,8 @@ public final class Overlay implements Function<Object[], Object> {
             }
         };
         replay = new Replay(options.gameDir, this::report);
+        browser = new Browser(options.dataDir, io, options.lang);
+        browserView = new BrowserView(browser, strings, this);
         crashGuard = new CrashGuard(options.dataDir);
         crashGuard.install();
         chat.onNew = this::onChat;
@@ -372,6 +376,11 @@ public final class Overlay implements Function<Object[], Object> {
 
     Media media() {
         return media;
+    }
+
+    /** Whether the renderer can draw pictures (the browser's page): only the OpenGL 3.2 one so far. */
+    boolean imagesSupported() {
+        return gl != null;
     }
 
     /** Disables the overlay after a failure in drawing or input, leaving the game untouched. */
@@ -838,15 +847,18 @@ public final class Overlay implements Function<Object[], Object> {
                 chatView.draw(ui, x, y, innerW, innerH);
                 break;
             case 1:
-                notesView.draw(ui, x, y, innerW, innerH);
+                browserView.draw(ui, x, y, innerW, innerH);
                 break;
             case 2:
-                toolsView.draw(ui, x, y, innerW, innerH);
+                notesView.draw(ui, x, y, innerW, innerH);
                 break;
             case 3:
-                modsView.draw(ui, x, y, innerW, innerH);
+                toolsView.draw(ui, x, y, innerW, innerH);
                 break;
             case 4:
+                modsView.draw(ui, x, y, innerW, innerH);
+                break;
+            case 5:
                 profileView.draw(ui, x, y, innerW, innerH);
                 break;
             default:

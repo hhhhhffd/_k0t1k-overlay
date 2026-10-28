@@ -183,10 +183,14 @@ final class SdlPlatform implements SdlBackend {
                 return Keys.F2;
             case 74:
                 return Keys.HOME;
+            case 75:
+                return Keys.PAGE_UP;
             case 76:
                 return Keys.DELETE;
             case 77:
                 return Keys.END;
+            case 78:
+                return Keys.PAGE_DOWN;
             case 79:
                 return Keys.RIGHT;
             case 80:

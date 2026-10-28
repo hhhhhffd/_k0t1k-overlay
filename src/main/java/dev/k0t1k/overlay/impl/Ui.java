@@ -150,6 +150,11 @@ final class Ui {
         round(x + 1, y + 1, w - 2, h - 2, r - 1, fill);
     }
 
+    /** Draws the batch's current image (see {@link Batch#image}) into the rectangle. */
+    void image(float x, float y, float w, float h) {
+        batch.image(x * scale, y * scale, w * scale, h * scale, 0xffffffff);
+    }
+
     void clip(float x, float y, float w, float h) {
         batch.pushClip(x * scale, y * scale, w * scale, h * scale);
     }

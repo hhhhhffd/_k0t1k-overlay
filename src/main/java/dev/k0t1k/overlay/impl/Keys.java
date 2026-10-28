@@ -18,6 +18,8 @@ final class Keys {
     static final int LEFT = 263;
     static final int DOWN = 264;
     static final int UP = 265;
+    static final int PAGE_UP = 266;
+    static final int PAGE_DOWN = 267;
     static final int HOME = 268;
     static final int END = 269;
     static final int F2 = 291;

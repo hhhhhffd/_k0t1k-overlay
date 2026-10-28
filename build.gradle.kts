@@ -23,6 +23,9 @@ val lwjglVulkan = "3.3.1"
 val lwjglSdl = "3.4.3"
 // LWJGL 2 (Minecraft 1.12.2 and older, Java 8): another API, so another source set.
 val lwjgl2 = "2.9.3"
+// The in-game browser's JCEF (jcefmaven's build on Maven Central). The overlay downloads the same
+// version at run time (Browser.VERSION, with its SHA-256 pinned there); keep the two in step.
+val jcef = "jcef-17e805a+cef-152.0.6+g708dc14+chromium-152.0.7977.83"
 
 sourceSets {
     create("vulkan") {
@@ -32,6 +35,11 @@ sourceSets {
         compileClasspath += sourceSets.main.get().output
     }
     create("lwjgl2") {
+        compileClasspath += sourceSets.main.get().output
+    }
+    // The bridge to JCEF. It must load next to JCEF (its classes live in JCEF's own package), so it
+    // ships as a jar inside the agent, not as classes of it.
+    create("cef") {
         compileClasspath += sourceSets.main.get().output
     }
 }
@@ -48,6 +56,9 @@ dependencies {
     "sdlCompileOnly"("org.lwjgl:lwjgl-sdl:$lwjglSdl")
     "sdlCompileOnly"("org.lwjgl:lwjgl-opengl:$lwjglSdl")
     "lwjgl2CompileOnly"("org.lwjgl.lwjgl:lwjgl:$lwjgl2")
+    "cefCompileOnly"("me.friwi:jcef-api:$jcef") {
+        isTransitive = false
+    }
 }
 
 java {
@@ -67,8 +78,17 @@ tasks.jar {
     enabled = false
 }
 
+val cefBridgeJar by tasks.registering(Jar::class) {
+    archiveFileName = "cef-bridge.jar"
+    destinationDirectory = layout.buildDirectory.dir("cef")
+    from(sourceSets["cef"].output)
+}
+
 tasks.shadowJar {
     from(sourceSets["vulkan"].output, sourceSets["sdl"].output, sourceSets["lwjgl2"].output)
+    from(cefBridgeJar) {
+        into("dev/k0t1k/overlay/impl")
+    }
     archiveBaseName = "k0t1k-overlay"
     archiveClassifier = ""
     // Mods may bring their own Byte Buddy; ours must never clash with it.
