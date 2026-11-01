@@ -6,6 +6,7 @@ import java.nio.DoubleBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 
+import org.lwjgl.PointerBuffer;
 import org.lwjgl.glfw.GLFWCharCallbackI;
 import org.lwjgl.glfw.GLFWCharModsCallbackI;
 import org.lwjgl.glfw.GLFWCursorPosCallbackI;
@@ -81,6 +82,35 @@ final class GlfwPlatform implements Platform {
         long monitor = glfwGetWindowMonitor(window);
         if (monitor == 0) {
             monitor = glfwGetPrimaryMonitor();
+            glfwGetWindowPos(window, w, h);
+            int wx = w.get(0);
+            int wy = h.get(0);
+            glfwGetWindowSize(window, w, h);
+            int ww = w.get(0);
+            int wh = h.get(0);
+            PointerBuffer monitors = glfwGetMonitors();
+            long bestArea = 0;
+            if (monitors != null) {
+                for (int i = monitors.position(); i < monitors.limit(); i++) {
+                    long candidate = monitors.get(i);
+                    GLFWVidMode mode = glfwGetVideoMode(candidate);
+                    if (mode == null) {
+                        continue;
+                    }
+                    glfwGetMonitorPos(candidate, w, h);
+                    int mx = w.get(0);
+                    int my = h.get(0);
+                    long overlapW = Math.max(0L, Math.min((long) wx + ww, (long) mx + mode.width())
+                            - Math.max(wx, mx));
+                    long overlapH = Math.max(0L, Math.min((long) wy + wh, (long) my + mode.height())
+                            - Math.max(wy, my));
+                    long area = overlapW * overlapH;
+                    if (area > bestArea) {
+                        monitor = candidate;
+                        bestArea = area;
+                    }
+                }
+            }
         }
         GLFWVidMode mode = monitor == 0 ? null : glfwGetVideoMode(monitor);
         return mode == null ? 0 : mode.width();

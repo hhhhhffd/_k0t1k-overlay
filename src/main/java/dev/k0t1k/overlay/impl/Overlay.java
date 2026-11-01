@@ -714,6 +714,7 @@ public final class Overlay implements Function<Object[], Object> {
             ui.onMove(sizes[2] / 2f * pixelRatio / ui.scale, sizes[3] / 2f * pixelRatio / ui.scale);
             toasts.clear();
         } else {
+            settingsView.flush();
             if (hudEditing) {
                 endHudEdit();
             }
@@ -1074,8 +1075,9 @@ public final class Overlay implements Function<Object[], Object> {
         int pos = options.toastPos;
         boolean up = pos == Options.TOAST_BOTTOM_LEFT || pos == Options.TOAST_BOTTOM_RIGHT;
         boolean left = pos == Options.TOAST_TOP_LEFT || pos == Options.TOAST_BOTTOM_LEFT;
-        float tw = pos == Options.TOAST_CENTER ? 240 : 300;
+        float tw = Math.min(w, pos == Options.TOAST_CENTER ? 240 : 300);
         float x = pos == Options.TOAST_CENTER ? (w - tw) / 2 : left ? 16 : w - tw - 16;
+        x = Math.max(0, Math.min(x, w - tw));
         float y = up ? h - 16 : pos == Options.TOAST_CENTER ? h / 2 + 48 : 16;
         List<float[]> avoid = new ArrayList<>();
         if (!open && options.hud) {
@@ -1092,17 +1094,31 @@ public final class Overlay implements Function<Object[], Object> {
             List<int[]> lines = ui.wrap(ui.regular, 13, toast.body, tw - 28);
             int shown = Math.min(lines.size(), 3);
             float th = 38 + shown * ui.lineHeight(ui.regular, 13);
-            float ty = up ? y - th : y;
-            for (boolean moved = true; moved; ) {
-                moved = false;
-                for (float[] box : avoid) {
-                    if (x < box[0] + box[2] + gap && x + tw > box[0] - gap
-                            && ty < box[1] + box[3] + gap && ty + th > box[1] - gap) {
-                        ty = up ? box[1] - gap - th : box[1] + box[3] + gap;
-                        moved = true;
+            float maxY = Math.max(0, h - th);
+            float startY = Math.max(0, Math.min(up ? y - th : y, maxY));
+            float ty = startY;
+            for (int attempt = 0; attempt < 2; attempt++) {
+                boolean moveUp = attempt == 0 ? up : !up;
+                ty = startY;
+                for (boolean moved = true; moved; ) {
+                    moved = false;
+                    for (float[] box : avoid) {
+                        if (x < box[0] + box[2] + gap && x + tw > box[0] - gap
+                                && ty < box[1] + box[3] + gap && ty + th > box[1] - gap) {
+                            float nextY = moveUp ? box[1] - gap - th : box[1] + box[3] + gap;
+                            if (moveUp ? nextY < ty : nextY > ty) {
+                                ty = nextY;
+                                moved = true;
+                            }
+                        }
                     }
                 }
+                if (ty >= 0 && ty <= maxY) {
+                    break;
+                }
             }
+            // When neither side has room, overlap the obstacle rather than leave the screen.
+            ty = Math.max(0, Math.min(ty, maxY));
             ui.panel(x, ty, tw, th, 10, 0xf21b1728, 0xff3a3256);
             ui.round(x + 1, ty + 10, 3, th - 20, 1.5f, Ui.ACCENT);
             ui.text(ui.bold, 13, x + 14, ty + 10, Ui.FG, toast.title);

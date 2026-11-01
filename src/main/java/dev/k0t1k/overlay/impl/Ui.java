@@ -1,5 +1,6 @@
 package dev.k0t1k.overlay.impl;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -57,6 +58,7 @@ final class Ui {
 
     /** The slider being dragged (the id it was given), or null. */
     private Object dragging;
+    private final ArrayDeque<float[]> clips = new ArrayDeque<>();
     /** The text field that receives keyboard input, or null. */
     Object focus;
     /** Set when a widget consumed the click, so clicking empty space can drop the focus. */
@@ -133,6 +135,8 @@ final class Ui {
 
     /** Clears per-frame input; called after the widgets of a frame ran. */
     void endFrame() {
+        // A frame that threw between clip and unclip must not leave hit testing clipped for good.
+        clips.clear();
         if (clicked && !clickHandled) {
             focus = null;
         }
@@ -161,7 +165,16 @@ final class Ui {
     }
 
     boolean hover(float x, float y, float w, float h) {
-        return mouseX >= x && mouseX < x + w && mouseY >= y && mouseY < y + h;
+        if (mouseX < x || mouseX >= x + w || mouseY < y || mouseY >= y + h) {
+            return false;
+        }
+        for (float[] clip : clips) {
+            if (mouseX < clip[0] || mouseX >= clip[0] + clip[2]
+                    || mouseY < clip[1] || mouseY >= clip[1] + clip[3]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     boolean clickedIn(float x, float y, float w, float h) {
@@ -217,10 +230,12 @@ final class Ui {
 
     void clip(float x, float y, float w, float h) {
         batch.pushClip(x * scale, y * scale, w * scale, h * scale);
+        clips.push(new float[] {x, y, w, h});
     }
 
     void unclip() {
         batch.popClip();
+        clips.pop();
     }
 
     float lineHeight(Font font, float size) {

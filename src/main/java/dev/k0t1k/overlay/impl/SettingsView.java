@@ -22,7 +22,7 @@ final class SettingsView {
     private int draggedScale;
     private final Object hudSizeSlider = new Object();
     private final Object hudOpacitySlider = new Object();
-    /** A HUD slider moved and the settings are not saved yet; they are on release. */
+    /** A HUD slider moved and the settings are not saved yet; they are on release or close. */
     private boolean hudSliderMoved;
     private float scroll;
     /** The y of the top of the column, so a section can tell where it starts within it. */
@@ -83,6 +83,13 @@ final class SettingsView {
         overlay.saveSettings();
     }
 
+    void flush() {
+        if (hudSliderMoved) {
+            changed();
+            hudSliderMoved = false;
+        }
+    }
+
     private float interfaceSection(Ui ui, float x, float y, float w) {
         y = heading(ui, INTERFACE, x, y, w);
         int auto = overlay.autoScalePercent();
@@ -122,7 +129,13 @@ final class SettingsView {
             changed();
         }
         String presets = strings.get("hud.presets");
-        float cx = x + 40 + 24 + ui.measure(ui.regular, 13, strings.get("perf.hud"));
+        float toggleW = 24 + ui.measure(ui.regular, 13, strings.get("perf.hud"));
+        float presetsW = ui.measure(ui.regular, 13, presets) + 10 + 3 * 34 + 30;
+        float cx = x + toggleW + 40;
+        if (cx + presetsW > x + w) {
+            cx = x;
+            y += 34;
+        }
         ui.text(ui.regular, 13, cx, y + 5, Ui.MUTED, presets);
         cx += ui.measure(ui.regular, 13, presets) + 10;
         String[] arrows = {"↖", "↗", "↙", "↘"};
@@ -136,7 +149,14 @@ final class SettingsView {
         }
         String edit = strings.get("hud.edit");
         float ew = ui.buttonWidth(edit);
-        if (ui.button(Math.max(cx + 4 * 34 + 12, x + w - ew), y - 1, ew, 28, edit, false)) {
+        float ex = cx + 3 * 34 + 30 + 16;
+        if (ex + ew > x + w) {
+            ex = x;
+            y += 34;
+        } else {
+            ex = x + w - ew;
+        }
+        if (ui.button(ex, y - 1, ew, 28, edit, false)) {
             overlay.startHudEdit();
         }
         y += 44;
@@ -152,8 +172,7 @@ final class SettingsView {
                 options.hudOpacity);
         y += 30;
         if (hudSliderMoved && !ui.dragging(hudSizeSlider) && !ui.dragging(hudOpacitySlider)) {
-            hudSliderMoved = false;
-            changed();
+            flush();
         }
 
         ui.text(ui.regular, 13, x, y + 1, Ui.MUTED, strings.get("hud.metrics"));
