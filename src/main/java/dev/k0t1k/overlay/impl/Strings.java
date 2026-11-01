@@ -35,7 +35,6 @@ final class Strings {
         add("toast.bottomRight", "Bottom right", "Справа снизу");
         add("toast.test", "Test notification", "Проверить уведомление");
         add("toast.testBody", "This is how notifications look here", "Так выглядят уведомления здесь");
-        add("settings.replay", "Replay", "Повтор");
         add("settings.hardware", "Fake hardware", "Подмена железа");
         add("hw.toggle", "Show fake hardware on the F3 screen", "Показывать на экране F3 другое железо");
         add("hw.cpu", "CPU name", "Процессор");
@@ -224,18 +223,89 @@ final class Strings {
         add("settings.browserCleared", "Cleared", "Удалено");
         add("settings.browserStopped", "Open the browser tab first", "Сначала открой вкладку браузера");
         add("replay.title", "Replay", "Повтор");
-        add("replay.toggle", "Keep the last 30 s", "Записывать последние 30 с");
-        add("replay.video", "Video", "Видео");
-        add("replay.gif", "GIF", "GIF");
-        add("replay.save", "Save 30 s", "Сохранить 30 с");
-        add("replay.hint", "Shift+F2 in game · video is MP4 with ffmpeg installed, AVI otherwise",
-                "Shift+F2 в игре · видео в MP4, если стоит ffmpeg, иначе AVI");
-        add("replay.unsupported", "Recording does not work with this game's renderer",
-                "Запись не работает с рендерером этой игры");
-        add("replay.off", "Recording is off", "Запись выключена");
-        add("replay.saving", "Saving the last 30 seconds…", "Сохраняю последние 30 секунд…");
+        add("replay.save", "Save replay", "Сохранить повтор");
+        add("replay.off", "The replay buffer is off (Settings, Recording)", "Буфер повтора выключен (Настройки, Запись)");
+        add("replay.starting", "The replay buffer is still starting", "Буфер повтора ещё запускается");
+        add("replay.stopped", "The replay buffer stopped; see Settings, Recording", "Буфер повтора остановился, подробности в Настройки, Запись");
+        add("replay.saving", "Saving the replay…", "Сохраняю повтор…");
         add("replay.saved", "Replay saved", "Повтор сохранён");
         add("replay.failed", "Nothing recorded yet", "Пока нечего сохранять");
+        add("settings.recording", "Recording", "Запись");
+        add("settings.hotkeys", "Hotkeys", "Горячие клавиши");
+        add("rec.title", "Recording", "Запись");
+        add("rec.start", "Start recording", "Начать запись");
+        add("rec.stop", "Stop recording", "Остановить запись");
+        add("rec.started", "Recording started", "Запись началась");
+        add("rec.saved", "Recording saved", "Запись сохранена");
+        add("rec.failed", "Recording failed", "Запись не удалась");
+        add("rec.unknown", "ffmpeg stopped without a message", "ffmpeg остановился без сообщения");
+        add("rec.remuxing", "Converting to MP4…", "Конвертирую в MP4…");
+        add("rec.noFfmpeg", "ffmpeg is not installed: download it in Settings, Recording", "ffmpeg не установлен: скачай его в Настройки, Запись");
+        add("rec.probing", "Testing the encoders, try again in a moment", "Проверяю кодеки, попробуй через пару секунд");
+        add("rec.unsupported", "Recording does not work with this game's renderer", "Запись не работает с рендерером этой игры");
+        add("rec.legacy", "Recording needs OpenGL 3.2 or Vulkan; this game renders with LWJGL 2",
+                "Для записи нужен OpenGL 3.2 или Vulkan; эта игра рисует через LWJGL 2");
+        add("rec.audioFailed", "%s audio is unavailable: %s", "Звук «%s» недоступен: %s");
+        add("rec.status", "Recording %s · dropped frames: %d", "Идёт запись %s · потеряно кадров: %d");
+        add("rec.keys", "Record: %s · Save replay: %s", "Запись: %s · Сохранить повтор: %s");
+        add("rec.dropped", "dropped frames: %d", "потеряно кадров: %d");
+        add("rec.bufferStopped", "The replay buffer stopped: %s", "Буфер повтора остановился: %s");
+        add("gif.title", "GIF", "GIF");
+        add("gif.make", "GIF of the last clip", "GIF из последнего клипа");
+        add("gif.noClip", "Record or save a replay first", "Сначала запиши видео или сохрани повтор");
+        add("gif.making", "Making the GIF…", "Делаю GIF…");
+        add("gif.saved", "GIF saved", "GIF сохранён");
+        add("rec.ffmpeg", "ffmpeg", "ffmpeg");
+        add("rec.auto", "Auto", "Авто");
+        add("rec.customPath", "Own file", "Свой файл");
+        add("rec.check", "Check", "Проверить");
+        add("rec.download", "Download ffmpeg (%s MB)", "Скачать ffmpeg (%s МБ)");
+        add("rec.downloading", "Downloading ffmpeg… %d%%", "Скачиваю ffmpeg… %d%%");
+        add("rec.ffmpegReady", "Ready: %s", "Готов: %s");
+        add("rec.ffmpegFailed", "Download failed: %s", "Не скачалось: %s");
+        add("rec.ffmpegMissing", "ffmpeg is needed to record; it is not on this computer", "Для записи нужен ffmpeg, его нет на этом компьютере");
+        add("rec.ffmpegNotFound", "No ffmpeg at that path", "По этому пути нет ffmpeg");
+        add("rec.noBuild", "No ffmpeg download for this system; install ffmpeg or point to your own file",
+                "Для этой системы нет готового ffmpeg; установи его или укажи свой файл");
+        add("rec.encoder", "Encoder", "Кодек");
+        add("rec.noEncoders", "Appears once ffmpeg is found", "Появится, когда найдётся ffmpeg");
+        add("rec.encoderUsed", "Used now: %s (only encoders that worked in a test are listed)",
+                "Сейчас: %s (в списке только кодеки, прошедшие проверку)");
+        add("rec.container", "Format", "Формат");
+        add("rec.remux", "Convert to MP4 after stopping", "Конвертировать в MP4 после остановки");
+        add("rec.containerHint", "MKV survives a crash; MP4 and MOV are written in fragments, so they survive it too",
+                "MKV переживает вылет игры; MP4 и MOV пишутся фрагментами и тоже переживают");
+        add("rec.fps", "Frames per second", "Кадров в секунду");
+        add("rec.resolution", "Resolution", "Разрешение");
+        add("rec.source", "As the game", "Как в игре");
+        add("rec.quality", "Quality", "Качество");
+        add("rec.low", "Low", "Низкое");
+        add("rec.medium", "Medium", "Среднее");
+        add("rec.high", "High", "Высокое");
+        add("rec.custom", "Bitrate", "Битрейт");
+        add("rec.mbit", "%d Mbit/s", "%d Мбит/с");
+        add("rec.folder", "Save to", "Куда сохранять");
+        add("rec.replayBuffer", "Keep the last seconds for the replay hotkey", "Держать последние секунды для повтора");
+        add("rec.seconds", "%d s", "%d с");
+        add("rec.replayHint", "The buffer encodes all the time, like a second recording; it needs ffmpeg",
+                "Буфер кодирует всё время, как вторая запись; нужен ffmpeg");
+        add("rec.audio", "Record audio", "Записывать звук");
+        add("rec.audioGame", "Game", "Игра");
+        add("rec.audioRest", "Desktop (other programs)", "Рабочий стол (другие программы)");
+        add("rec.audioMic", "Microphone", "Микрофон");
+        add("rec.audioUnavailable", "Not available on this system", "Недоступно в этой системе");
+        add("rec.audioHint", "Each source gets its own track after the mix. On Linux the desktop source includes the game.",
+                "Каждый источник пишется отдельной дорожкой после общей. В Linux «рабочий стол» включает и игру.");
+        add("rec.gif", "GIF from the last clip", "GIF из последнего клипа");
+        add("rec.gifHint", "Frame rate, width and how many seconds from the end of the clip", "Частота кадров, ширина и сколько секунд с конца клипа");
+        add("hotkeys.title", "Hotkeys", "Горячие клавиши");
+        add("hotkeys.open", "Open the overlay", "Открыть оверлей");
+        add("hotkeys.record", "Start / stop recording", "Начать / остановить запись");
+        add("hotkeys.save", "Save the replay", "Сохранить повтор");
+        add("hotkeys.press", "Press a key…", "Нажми клавишу…");
+        add("hotkeys.reset", "Reset", "Сбросить");
+        add("hotkeys.needMod", "Use Ctrl, Alt or Shift with a letter or digit", "С буквой или цифрой нужен Ctrl, Alt или Shift");
+        add("hotkeys.hint", "Click a button, then press the new combination; Esc cancels", "Нажми кнопку и затем новое сочетание; Esc отменяет");
     }
 
     private void add(String key, String en, String ru) {

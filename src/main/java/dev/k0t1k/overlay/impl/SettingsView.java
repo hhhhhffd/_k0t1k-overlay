@@ -8,18 +8,20 @@ package dev.k0t1k.overlay.impl;
  */
 final class SettingsView {
     private static final String[] SECTIONS = {"settings.interface", "settings.hud", "settings.notify", "settings.cat",
-            "settings.replay", "settings.browser", "settings.hardware"};
+            "settings.recording", "settings.hotkeys", "settings.browser", "settings.hardware"};
     private static final int INTERFACE = 0;
     private static final int HUD = 1;
     private static final int NOTIFY = 2;
     private static final int CAT = 3;
-    private static final int REPLAY = 4;
-    private static final int BROWSER = 5;
-    private static final int HARDWARE = 6;
+    private static final int RECORDING = 4;
+    private static final int HOTKEYS = 5;
+    private static final int BROWSER = 6;
+    private static final int HARDWARE = 7;
 
     private final Overlay overlay;
     private final Options options;
     private final Strings strings;
+    private final RecordingView recordingView;
     /** The percent shown while the scale slider is dragged; the scale itself changes on release. */
     private int draggedScale;
     private final Object hudSizeSlider = new Object();
@@ -50,6 +52,7 @@ final class SettingsView {
         fakeGpu = new TextEdit(options.fakeGpu);
         fakeVendor = new TextEdit(options.fakeVendor);
         fakeMemory = new TextEdit(Integer.toString(options.fakeMemory));
+        this.recordingView = new RecordingView(overlay);
     }
 
     void draw(Ui ui, float x, float y, float w, float h) {
@@ -65,7 +68,8 @@ final class SettingsView {
         cy = hudSection(ui, cx, cy, cw);
         cy = notifySection(ui, cx, cy, cw);
         cy = catSection(ui, cx, cy, cw);
-        cy = replaySection(ui, cx, cy, cw);
+        cy = recordingSection(ui, cx, cy, cw);
+        cy = hotkeysSection(ui, cx, cy, cw);
         cy = browserSection(ui, cx, cy, cw);
         cy = hardwareSection(ui, cx, cy, cw);
         ui.unclip();
@@ -281,24 +285,14 @@ final class SettingsView {
         return y + 48;
     }
 
-    private float replaySection(Ui ui, float x, float y, float w) {
-        y = heading(ui, REPLAY, x, y, w);
-        boolean on = ui.checkbox(x, y + 6, strings.get("replay.toggle"), options.replay);
-        if (on != options.replay) {
-            options.replay = on;
-            changed();
-        }
-        float fx = x + ui.measure(ui.regular, 13, strings.get("replay.toggle")) + 40;
-        for (String format : new String[] {"video", "gif"}) {
-            String label = strings.get("replay." + format);
-            float pw = ui.measure(ui.bold, 13, label) + 20;
-            if (ui.pill(fx, y + 1, pw, 26, label, format.equals(options.replayFormat))) {
-                options.replayFormat = format;
-                changed();
-            }
-            fx += pw + 4;
-        }
-        return y + 48;
+    private float recordingSection(Ui ui, float x, float y, float w) {
+        y = heading(ui, RECORDING, x, y, w);
+        return recordingView.recording(ui, x, y, w) + 16;
+    }
+
+    private float hotkeysSection(Ui ui, float x, float y, float w) {
+        y = heading(ui, HOTKEYS, x, y, w);
+        return recordingView.hotkeys(ui, x, y, w) + 16;
     }
 
     private float browserSection(Ui ui, float x, float y, float w) {

@@ -1,0 +1,794 @@
+package dev.k0t1k.overlay.impl;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+
+/**
+ * Records the game with ffmpeg, like OBS: frames come from the renderer as NV12 (OpenGL converts them on
+ * the GPU) or RGBA (Vulkan; converted here), go through a small pool to a writer thread, and from there
+ * into the standard input of an ffmpeg process that encodes them with the audio. The render thread
+ * never waits: with no free frame buffer the frame is dropped and counted.
+ *
+ * <p>A recording (hotkey) and the replay buffer (always on, see {@link Replay}) are two sessions with
+ * a process each, fed the same frames, so they can run together at the price of encoding twice.
+ */
+final class Recorder {
+    /** A frame buffer on its way from the renderer to the writer and back to the pool. */
+    static final class Frame {
+        final byte[] data;
+        int width;
+        int height;
+        /** RGBA rows top to bottom, else NV12. */
+        boolean rgba;
+        private final ArrayBlockingQueue<Frame> home;
+
+        private Frame(int bytes, ArrayBlockingQueue<Frame> home) {
+            this.data = new byte[bytes];
+            this.home = home;
+        }
+    }
+
+    private enum State { WAITING, STARTING, RUNNING, STOPPING, ENDED }
+
+    private static final int POOL = 3;
+    private static final String[] AUDIO_NAMES = {"Game", "Desktop", "Microphone"};
+
+    private final Options options;
+    private final Strings strings;
+    private final Ffmpeg ffmpeg;
+    private final Replay replay;
+    private final ScheduledExecutorService io;
+    private final Executor render;
+    private final BiConsumer<String, String> notify;
+    private final Consumer<Throwable> onError;
+
+    private volatile Session recording;
+    private volatile Session buffer;
+    /** The buffer failed or was stopped on purpose; it starts again when the settings change or are toggled. */
+    private String bufferBlockedBy;
+    private String bufferSignature = "";
+    private long signatureChangedAt;
+    private boolean bufferWasWanted;
+    /** The last file saved, for the GIF button. */
+    private volatile Path lastClip;
+    private volatile boolean busy;
+    private volatile boolean broken;
+
+    /** The size every session encodes at; set when the first one starts, 0 with none. */
+    private volatile int width;
+    private volatile int height;
+    private long nextCapture;
+    private volatile int dropped;
+
+    private ArrayBlockingQueue<Frame> pool;
+    private int poolBytes;
+    private final ArrayBlockingQueue<Frame> queue = new ArrayBlockingQueue<>(POOL);
+    private Thread writer;
+    /** The writer's own NV12 scratch for RGBA frames. */
+    private byte[] converted;
+
+    Recorder(Options options, Ffmpeg ffmpeg, ScheduledExecutorService io, Executor render,
+            BiConsumer<String, String> notify, Consumer<Throwable> onError) {
+        this.options = options;
+        this.strings = options.strings;
+        this.ffmpeg = ffmpeg;
+        this.io = io;
+        this.render = render;
+        this.notify = notify;
+        this.onError = onError;
+        this.replay = new Replay(options, ffmpeg, io, onError);
+    }
+
+    // ---- state, for the interface ----
+
+    /** Whether any session wants frames. */
+    boolean wanted() {
+        return recording != null || buffer != null;
+    }
+
+    boolean recording() {
+        Session session = recording;
+        return session != null && session.state != State.ENDED;
+    }
+
+    boolean buffering() {
+        Session session = buffer;
+        return session != null && session.state == State.RUNNING;
+    }
+
+    /** Whether a save, stop or conversion is under way. */
+    boolean busy() {
+        return busy;
+    }
+
+    long recordingMillis() {
+        Session session = recording;
+        return session != null && session.state == State.RUNNING ? System.currentTimeMillis() - session.startedAt : 0;
+    }
+
+    int dropped() {
+        return dropped;
+    }
+
+    boolean hasClip() {
+        return lastClip != null;
+    }
+
+    /** Why the replay buffer is not running although it is on, or empty. */
+    String bufferProblem() {
+        return bufferBlockedBy == null ? "" : bufferBlockedBy;
+    }
+
+    /** A renderer could not read frames; nothing records for the rest of this game. */
+    void failed(Throwable error) {
+        broken = true;
+        onError.accept(error);
+        io.execute(() -> {
+            stopSession(recording);
+            stopSession(buffer);
+        });
+    }
+
+    // ---- commands, on the render thread ----
+
+    /** Starts a recording, or stops the running one. */
+    void toggleRecording() {
+        Session session = recording;
+        if (session != null && session.state != State.ENDED) {
+            if (session.state == State.RUNNING) {
+                io.execute(() -> stopSession(session));
+            }
+            return;
+        }
+        if (!ready()) {
+            return;
+        }
+        recording = new Session(false);
+    }
+
+    /** Writes the replay buffer's last seconds to a file. */
+    void saveReplay() {
+        Session session = buffer;
+        if (session == null || session.state != State.RUNNING) {
+            notify.accept(strings.get("replay.title"), strings.get(options.replayBuffer
+                    ? bufferProblem().isEmpty() ? "replay.starting" : "replay.stopped" : "replay.off"));
+            return;
+        }
+        if (busy) {
+            return;
+        }
+        busy = true;
+        notify.accept(strings.get("replay.title"), strings.get("replay.saving"));
+        io.execute(() -> {
+            try {
+                Path file = replay.save();
+                if (file == null) {
+                    notify.accept(strings.get("replay.title"), strings.get("replay.failed"));
+                } else {
+                    lastClip = file;
+                    notify.accept(strings.get("replay.saved"), file.getFileName() + "\n" + file.getParent());
+                }
+            } catch (IOException e) {
+                notify.accept(strings.get("rec.failed"), e.getMessage());
+                onError.accept(e);
+            } finally {
+                busy = false;
+            }
+        });
+    }
+
+    /** Makes a GIF from the end of the last saved clip. */
+    void makeGif() {
+        Path clip = lastClip;
+        if (clip == null) {
+            notify.accept(strings.get("gif.title"), strings.get("gif.noClip"));
+            return;
+        }
+        if (busy || !ready()) {
+            return;
+        }
+        busy = true;
+        notify.accept(strings.get("gif.title"), strings.get("gif.making"));
+        io.execute(() -> {
+            try {
+                Path file = replay.gif(clip);
+                notify.accept(strings.get("gif.saved"), file.getFileName() + "\n" + file.getParent());
+            } catch (IOException e) {
+                notify.accept(strings.get("rec.failed"), e.getMessage());
+                onError.accept(e);
+            } finally {
+                busy = false;
+            }
+        });
+    }
+
+    /** Whether recording can start now; says why not when it cannot. */
+    private boolean ready() {
+        if (broken) {
+            notify.accept(strings.get("rec.title"), strings.get("rec.unsupported"));
+            return false;
+        }
+        if (ffmpeg.path() == null) {
+            notify.accept(strings.get("rec.title"), strings.get("rec.noFfmpeg"));
+            return false;
+        }
+        if (ffmpeg.probing()) {
+            notify.accept(strings.get("rec.title"), strings.get("rec.probing"));
+            return false;
+        }
+        return true;
+    }
+
+    /** Called every frame on the render thread: starts and stops the replay buffer, forgets finished sessions. */
+    void tick() {
+        Session session = recording;
+        if (session != null && session.state == State.ENDED) {
+            recording = null;
+        }
+        session = buffer;
+        if (session != null && session.state == State.ENDED) {
+            buffer = null;
+        }
+        if (recording == null && buffer == null) {
+            width = height = 0;
+        }
+        boolean wanted = options.replayBuffer && !broken && ffmpeg.path() != null && !ffmpeg.probing();
+        if (wanted != bufferWasWanted) {
+            bufferWasWanted = wanted;
+            bufferBlockedBy = null;
+        }
+        String signature = signature();
+        long now = System.currentTimeMillis();
+        if (!signature.equals(bufferSignature)) {
+            bufferSignature = signature;
+            signatureChangedAt = now;
+            bufferBlockedBy = null;
+        }
+        session = buffer;
+        if (session != null && (!wanted || !session.signature.equals(signature) && now - signatureChangedAt > 1500)) {
+            // Settings changed (after the player stopped dragging a slider) or the buffer was turned off.
+            Session stopping = session;
+            if (session.state == State.WAITING) {
+                buffer = null;
+            } else if (session.state == State.RUNNING) {
+                io.execute(() -> stopSession(stopping));
+            }
+        } else if (session == null && wanted && bufferBlockedBy == null) {
+            buffer = new Session(true);
+        }
+    }
+
+    /** The settings a running buffer was started with; a change restarts it. */
+    private String signature() {
+        return String.join("|", options.encoder, options.fps + "", options.resolution, options.quality, options.bitrate + "",
+                options.audio + "", options.audioGame + "", options.audioRest + "", options.audioMic + "",
+                options.volumeGame + "", options.volumeRest + "", options.volumeMic + "", ffmpeg.path());
+    }
+
+    // ---- frames, from the renderers ----
+
+    /** Whether the renderer should read back this frame; also starts sessions that wait for the frame's size. */
+    boolean due(int frameWidth, int frameHeight) {
+        Session r = recording;
+        Session b = buffer;
+        if (broken || r == null && b == null || frameWidth < 2 || frameHeight < 2) {
+            return false;
+        }
+        int fps = 0;
+        for (Session session : new Session[] {r, b}) {
+            if (session == null) {
+                continue;
+            }
+            if (session.state == State.WAITING) {
+                if (width == 0) {
+                    int[] size = target(frameWidth, frameHeight);
+                    width = size[0];
+                    height = size[1];
+                }
+                session.state = State.STARTING;
+                session.width = width;
+                session.height = height;
+                io.execute(session::launch);
+            } else if (session.state == State.RUNNING) {
+                fps = Math.max(fps, session.fps);
+            }
+        }
+        long now = System.nanoTime();
+        if (fps == 0 || now < nextCapture) {
+            return false;
+        }
+        nextCapture = Math.max(nextCapture + 1_000_000_000L / fps, now);
+        return true;
+    }
+
+    /** The encoded size for a frame size and the resolution setting, both even. */
+    private int[] target(int frameWidth, int frameHeight) {
+        int limit = "1080".equals(options.resolution) ? 1080 : "720".equals(options.resolution) ? 720 : Integer.MAX_VALUE;
+        int h = Math.min(frameHeight, limit);
+        int w = Math.round(frameWidth * (h / (float) frameHeight));
+        return new int[] {Math.max(2, w & ~1), Math.max(2, h & ~1)};
+    }
+
+    /** The size frames must have: what {@link #due} settled on. */
+    int width() {
+        return width;
+    }
+
+    int height() {
+        return height;
+    }
+
+    /** A free frame buffer for a frame of the session's size, or null (and counted as dropped) when none is free. */
+    Frame acquire(boolean rgba) {
+        int w = width;
+        int h = height;
+        if (w == 0) {
+            return null;
+        }
+        int bytes = rgba ? w * h * 4 : w * h * 3 / 2;
+        if (pool == null || poolBytes != bytes) {
+            pool = new ArrayBlockingQueue<>(POOL);
+            poolBytes = bytes;
+            for (int i = 0; i < POOL; i++) {
+                pool.add(new Frame(bytes, pool));
+            }
+        }
+        Frame frame = pool.poll();
+        if (frame == null) {
+            dropped++;
+            return null;
+        }
+        frame.width = w;
+        frame.height = h;
+        frame.rgba = rgba;
+        return frame;
+    }
+
+    /** Hands a filled frame to the writer; it is encoded for every running session. */
+    void submit(Frame frame) {
+        if (!queue.offer(frame)) {
+            dropped++;
+            frame.home.offer(frame);
+            return;
+        }
+        if (writer == null) {
+            writer = new Thread(this::write, "k0t1k-overlay-writer");
+            writer.setDaemon(true);
+            writer.start();
+        }
+    }
+
+    private void write() {
+        try {
+            for (;;) {
+                Frame frame = queue.take();
+                try {
+                    byte[] nv12 = frame.data;
+                    if (frame.rgba) {
+                        int size = frame.width * frame.height * 3 / 2;
+                        if (converted == null || converted.length != size) {
+                            converted = new byte[size];
+                        }
+                        toNv12(frame.data, frame.width, frame.height, converted);
+                        nv12 = converted;
+                    }
+                    for (Session session : new Session[] {recording, buffer}) {
+                        if (session != null) {
+                            session.write(nv12, frame.width, frame.height);
+                        }
+                    }
+                } finally {
+                    frame.home.offer(frame);
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** RGBA rows top to bottom to NV12 (BT.709, limited range), chroma averaged over 2 x 2 pixels. */
+    static void toNv12(byte[] rgba, int w, int h, byte[] out) {
+        int uv = w * h;
+        for (int y = 0; y < h; y += 2) {
+            for (int x = 0; x < w; x += 2) {
+                int sumR = 0;
+                int sumG = 0;
+                int sumB = 0;
+                for (int dy = 0; dy < 2; dy++) {
+                    for (int dx = 0; dx < 2; dx++) {
+                        int i = ((y + dy) * w + x + dx) * 4;
+                        int r = rgba[i] & 255;
+                        int g = rgba[i + 1] & 255;
+                        int b = rgba[i + 2] & 255;
+                        out[(y + dy) * w + x + dx] = (byte) (16 + ((47 * r + 157 * g + 16 * b) >> 8));
+                        sumR += r;
+                        sumG += g;
+                        sumB += b;
+                    }
+                }
+                int r = (sumR + 2) >> 2;
+                int g = (sumG + 2) >> 2;
+                int b = (sumB + 2) >> 2;
+                int o = uv + (y / 2) * w + x;
+                out[o] = (byte) (128 + ((-26 * r - 86 * g + 112 * b) >> 8));
+                out[o + 1] = (byte) (128 + ((112 * r - 102 * g - 10 * b) >> 8));
+            }
+        }
+    }
+
+    // ---- sessions ----
+
+    /** Stops everything and waits for the files to be finished; the JVM is exiting. */
+    void shutdown() {
+        for (Session session : new Session[] {recording, buffer}) {
+            if (session != null) {
+                session.finish(false);
+            }
+        }
+    }
+
+    /** Runs on the io thread. */
+    private void stopSession(Session session) {
+        if (session != null) {
+            session.finish(true);
+        }
+    }
+
+    /** One ffmpeg process: a recording to a file, or the replay buffer's segments. */
+    private final class Session {
+        final boolean isBuffer;
+        volatile State state = State.WAITING;
+        volatile int width;
+        volatile int height;
+        final String signature = signature();
+        final String encoder;
+        final int fps = options.fps;
+        long startedAt;
+        private Path file;
+        private Process process;
+        private OutputStream stdin;
+        private final List<AudioCapture.Feed> feeds = new ArrayList<>();
+        private final ArrayDeque<String> lines = new ArrayDeque<>();
+        private Thread errors;
+        private final Object lock = new Object();
+        private boolean failedAlready;
+
+        Session(boolean isBuffer) {
+            this.isBuffer = isBuffer;
+            this.encoder = ffmpeg.chooseEncoder(options.encoder);
+        }
+
+        /** Starts the audio helpers, then ffmpeg. Runs on the io thread. */
+        void launch() {
+            try {
+                List<String> audioNames = startAudio();
+                List<String> command = command(audioNames);
+                Process started = new ProcessBuilder(command).start();
+                synchronized (lock) {
+                    process = started;
+                    stdin = started.getOutputStream();
+                    errors = new Thread(() -> readErrors(started), "k0t1k-overlay-ffmpeg");
+                    errors.setDaemon(true);
+                    errors.start();
+                    startedAt = System.currentTimeMillis();
+                    state = State.RUNNING;
+                }
+                if (!isBuffer) {
+                    notify.accept(strings.get("rec.title"), strings.get("rec.started"));
+                }
+            } catch (IOException | RuntimeException e) {
+                onError.accept(e);
+                fail(String.valueOf(e.getMessage() != null ? e.getMessage() : e));
+            }
+        }
+
+        private List<String> startAudio() {
+            List<String> names = new ArrayList<>();
+            if (!options.audio) {
+                return names;
+            }
+            boolean[] wanted = {options.audioGame, options.audioRest, options.audioMic};
+            AudioCapture.Kind[] kinds = AudioCapture.Kind.values();
+            AudioCapture.Feed[] results = new AudioCapture.Feed[kinds.length];
+            String[] problems = new String[kinds.length];
+            List<Thread> threads = new ArrayList<>();
+            for (int i = 0; i < kinds.length; i++) {
+                if (!wanted[i] || !AudioCapture.supported() || AudioCapture.failed(kinds[i])) {
+                    continue;
+                }
+                int index = i;
+                Thread thread = new Thread(() -> {
+                    try {
+                        results[index] = AudioCapture.start(kinds[index], options.dataDir);
+                    } catch (IOException e) {
+                        problems[index] = e.getMessage();
+                    }
+                }, "k0t1k-overlay-audio-start");
+                thread.setDaemon(true);
+                thread.start();
+                threads.add(thread);
+            }
+            for (Thread thread : threads) {
+                try {
+                    thread.join();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            for (int i = 0; i < kinds.length; i++) {
+                if (results[i] != null) {
+                    feeds.add(results[i]);
+                    names.add(AUDIO_NAMES[i]);
+                } else if (problems[i] != null) {
+                    notify.accept(strings.get("rec.title"), strings.format("rec.audioFailed", AUDIO_NAMES[i], problems[i]));
+                }
+            }
+            return names;
+        }
+
+        private List<String> command(List<String> audioNames) throws IOException {
+            String binary = ffmpeg.path();
+            if (binary == null) {
+                throw new IOException(strings.get("rec.noFfmpeg"));
+            }
+            boolean vaapi = encoder.endsWith("_vaapi");
+            List<String> c = new ArrayList<>(Arrays.asList(binary, "-hide_banner", "-loglevel", "error", "-nostats", "-y"));
+            if (vaapi) {
+                c.addAll(Arrays.asList("-vaapi_device", "/dev/dri/renderD128"));
+            }
+            c.addAll(Arrays.asList("-thread_queue_size", "8", "-use_wallclock_as_timestamps", "1", "-f", "rawvideo",
+                    "-pix_fmt", "nv12", "-video_size", width + "x" + height, "-framerate", String.valueOf(fps), "-i", "-"));
+            for (AudioCapture.Feed feed : feeds) {
+                c.addAll(Arrays.asList("-thread_queue_size", "512", "-f", "s16le", "-ar", "48000", "-ac", "2", "-i", feed.input()));
+            }
+            if (!feeds.isEmpty()) {
+                c.addAll(audioMaps());
+                for (int i = 0; i < audioTracks(); i++) {
+                    String title = audioTracks() == 1 || i > 0 ? audioNames.get(audioTracks() == 1 ? 0 : i - 1) : "Mix";
+                    c.addAll(Arrays.asList("-metadata:s:a:" + i, "title=" + title));
+                }
+            }
+            if (vaapi) {
+                c.addAll(Arrays.asList("-vf", "format=nv12,hwupload"));
+            }
+            c.addAll(Arrays.asList("-fps_mode", "cfr", "-r", String.valueOf(fps), "-g", String.valueOf(fps * 2),
+                    "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"));
+            c.addAll(Ffmpeg.encoderArgs(encoder, options.quality, options.bitrate));
+            if (!feeds.isEmpty()) {
+                c.addAll(Arrays.asList("-c:a", "aac", "-b:a", "160k"));
+            }
+            if (isBuffer) {
+                Path folder = replay.begin(Ffmpeg.hevc(encoder));
+                c.addAll(Arrays.asList("-force_key_frames", "expr:gte(t,n_forced*" + Replay.SEGMENT_SECONDS + ")",
+                        "-f", "segment", "-segment_time", String.valueOf(Replay.SEGMENT_SECONDS),
+                        "-segment_format", "matroska", "-reset_timestamps", "1", Replay.pattern(folder)));
+            } else {
+                Path folder = options.recordingsFolder();
+                Files.createDirectories(folder);
+                file = folder.resolve(LocalDateTime.now().format(Replay.NAME) + "." + Ffmpeg.extension(options.container));
+                c.addAll(Ffmpeg.containerArgs(options.container, encoder));
+                c.add(file.toString());
+            }
+            return c;
+        }
+
+        /** One track when there is one source, else the mix followed by a track for each source. */
+        private int audioTracks() {
+            return feeds.size() == 1 ? 1 : feeds.size() + 1;
+        }
+
+        private List<String> audioMaps() {
+            int[] volumes = {options.volumeGame, options.volumeRest, options.volumeMic};
+            StringBuilder graph = new StringBuilder();
+            List<String> maps = new ArrayList<>(Arrays.asList("-map", "0:v"));
+            if (feeds.size() == 1) {
+                graph.append("[1:a]volume=").append(volume(volumes[feeds.get(0).kind.ordinal()])).append("[mix]");
+                maps.addAll(Arrays.asList("-map", "[mix]"));
+            } else {
+                StringBuilder mixInputs = new StringBuilder();
+                for (int i = 0; i < feeds.size(); i++) {
+                    graph.append('[').append(i + 1).append(":a]volume=").append(volume(volumes[feeds.get(i).kind.ordinal()]))
+                            .append(",asplit=2[m").append(i).append("][t").append(i).append("];");
+                    mixInputs.append("[m").append(i).append(']');
+                }
+                graph.append(mixInputs).append("amix=inputs=").append(feeds.size()).append(":normalize=0[mix]");
+                maps.addAll(Arrays.asList("-map", "[mix]"));
+                for (int i = 0; i < feeds.size(); i++) {
+                    maps.addAll(Arrays.asList("-map", "[t" + i + "]"));
+                }
+            }
+            List<String> out = new ArrayList<>(Arrays.asList("-filter_complex", graph.toString()));
+            out.addAll(maps);
+            return out;
+        }
+
+        private String volume(int percent) {
+            return String.format(Locale.ROOT, "%.2f", percent / 100f);
+        }
+
+        private void readErrors(Process started) {
+            try (BufferedReader in = new BufferedReader(new InputStreamReader(started.getErrorStream(), StandardCharsets.UTF_8))) {
+                for (String line; (line = in.readLine()) != null; ) {
+                    if (!line.trim().isEmpty()) {
+                        synchronized (lines) {
+                            lines.addLast(line.trim());
+                            if (lines.size() > 8) {
+                                lines.removeFirst();
+                            }
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                // The process is gone.
+            }
+        }
+
+        private String lastError() {
+            try {
+                if (errors != null) {
+                    errors.join(1000);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            synchronized (lines) {
+                return lines.isEmpty() ? "" : lines.getLast();
+            }
+        }
+
+        /** Writes one NV12 frame; runs on the writer thread. A broken pipe means ffmpeg died. */
+        void write(byte[] nv12, int frameWidth, int frameHeight) {
+            if (frameWidth != width || frameHeight != height) {
+                return;
+            }
+            synchronized (lock) {
+                if (state != State.RUNNING) {
+                    return;
+                }
+                try {
+                    stdin.write(nv12, 0, frameWidth * frameHeight * 3 / 2);
+                    stdin.flush();
+                    return;
+                } catch (IOException e) {
+                    state = State.STOPPING;
+                }
+            }
+            io.execute(() -> fail(lastError()));
+        }
+
+        /** Ends the session after an error: stops the process, tells the player why. */
+        void fail(String reason) {
+            synchronized (lock) {
+                if (failedAlready) {
+                    return;
+                }
+                failedAlready = true;
+                state = State.STOPPING;
+            }
+            teardown();
+            if (isBuffer) {
+                bufferBlockedBy = reason.isEmpty() ? "?" : reason;
+            }
+            notify.accept(strings.get("rec.failed"), reason.isEmpty() ? strings.get("rec.unknown") : reason);
+            state = State.ENDED;
+        }
+
+        /** Closes the audio and the video, waits for ffmpeg to write the file, and reports it. */
+        void finish(boolean report) {
+            synchronized (lock) {
+                if (state == State.ENDED || state == State.STOPPING) {
+                    return;
+                }
+                if (state != State.RUNNING) {
+                    state = State.ENDED; // never got going
+                    return;
+                }
+                state = State.STOPPING;
+            }
+            boolean ok = teardown();
+            String reason = lastError();
+            state = State.ENDED;
+            if (isBuffer || !report) {
+                return;
+            }
+            if (!ok && (file == null || !Files.exists(file))) {
+                notify.accept(strings.get("rec.failed"), reason.isEmpty() ? strings.get("rec.unknown") : reason);
+                return;
+            }
+            Path result = file;
+            busy = true;
+            try {
+                if (options.remux && "mkv".equals(options.container)) {
+                    notify.accept(strings.get("rec.title"), strings.get("rec.remuxing"));
+                    Path mp4 = file.resolveSibling(file.getFileName().toString().replaceFirst("\\.mkv$", ".mp4"));
+                    Ffmpeg.run(Arrays.asList(ffmpeg.path(), "-hide_banner", "-loglevel", "error", "-y", "-i", file.toString(),
+                            "-map", "0", "-c", "copy", "-movflags", "+faststart", mp4.toString()));
+                    Files.delete(file);
+                    result = mp4;
+                }
+                lastClip = result;
+                notify.accept(strings.get("rec.saved"), result.getFileName() + "\n" + result.getParent());
+            } catch (IOException e) {
+                notify.accept(strings.get("rec.failed"), e.getMessage());
+                lastClip = file;
+                onError.accept(e);
+            } finally {
+                busy = false;
+            }
+        }
+
+        /** Stops audio first (ffmpeg ends when all its inputs do), then video. True when ffmpeg exited cleanly. */
+        private boolean teardown() {
+            for (AudioCapture.Feed feed : feeds) {
+                feed.close();
+            }
+            synchronized (lock) {
+                try {
+                    if (stdin != null) {
+                        stdin.close();
+                    }
+                } catch (IOException e) {
+                    // ffmpeg is already gone.
+                }
+            }
+            boolean ok = false;
+            if (process != null) {
+                try {
+                    if (process.waitFor(30, TimeUnit.SECONDS)) {
+                        ok = process.exitValue() == 0;
+                    } else {
+                        process.destroyForcibly();
+                    }
+                } catch (InterruptedException e) {
+                    process.destroyForcibly();
+                    Thread.currentThread().interrupt();
+                }
+            }
+            if (isBuffer) {
+                replay.end();
+            }
+            return ok;
+        }
+    }
+
+    // ---- the red dot ----
+
+    /** The recording indicator, drawn after the frame was captured so it is not in the video. */
+    void drawIndicator(Ui ui, float w) {
+        Session session = recording;
+        if (session == null || session.state != State.RUNNING) {
+            return;
+        }
+        long seconds = recordingMillis() / 1000;
+        String time = seconds >= 3600
+                ? String.format(Locale.ROOT, "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+                : String.format(Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60);
+        float tw = ui.measure(ui.bold, 13, time);
+        // Top right, unless a shown HUD sits in the top right half: then top left.
+        boolean left = options.hud && options.hudX >= 0.5f && options.hudY < 0.5f;
+        float bw = tw + 38;
+        float x = left ? 12 : w - bw - 12;
+        ui.round(x, 12, bw, 26, 13, 0xcc13101c);
+        if (System.currentTimeMillis() / 600 % 2 == 0) {
+            ui.round(x + 10, 21, 8, 8, 4, 0xffed4245);
+        }
+        ui.text(ui.bold, 13, x + 26, 12 + (26 - ui.lineHeight(ui.bold, 13)) / 2, Ui.FG, time);
+    }
+}

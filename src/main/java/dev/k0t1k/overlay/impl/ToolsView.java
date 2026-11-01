@@ -262,19 +262,54 @@ final class ToolsView {
 
     // ---- screenshots ----
 
-    /** The replay row: the save button and what state the buffer is in (the toggles are in Settings). Returns the y below it. */
+    /** The recording row: record, save the replay buffer, make a GIF, and what state it all is in. Returns the y below it. */
     private float replay(Ui ui, float x, float y, float w) {
         Options options = overlay.options();
-        ui.text(ui.bold, 13, x, y + 6, Ui.FG, strings.get("replay.title"));
+        Recorder recorder = overlay.recorder();
+        boolean available = overlay.captureAvailable();
+        ui.text(ui.bold, 13, x, y + 6, Ui.FG, strings.get("rec.title"));
+        String record = strings.get(recorder.recording() ? "rec.stop" : "rec.start");
         String save = strings.get("replay.save");
-        float sw = ui.buttonWidth(save);
-        if (ui.button(x + w - sw, y, sw, 28, save, overlay.replayAvailable())) {
+        String gif = strings.get("gif.make");
+        float[] widths = {ui.buttonWidth(record), ui.buttonWidth(save), ui.buttonWidth(gif)};
+        float cx = x;
+        float cy = y + 30;
+        if (ui.button(cx, cy, widths[0], 28, record, recorder.recording())) {
+            overlay.toggleRecording();
+        }
+        cx += widths[0] + 8;
+        if (ui.button(cx, cy, widths[1], 28, save, recorder.buffering())) {
             overlay.saveReplay();
         }
-        String hint = overlay.replayAvailable() ? strings.get("replay.hint")
-                : options.replay ? strings.get("replay.unsupported") : strings.get("replay.off");
-        ui.textFit(ui.regular, 12, x, y + 34, w, Ui.FAINT, hint);
-        return y + 56;
+        cx += widths[1] + 8;
+        if (cx + widths[2] > x + w) {
+            cx = x;
+            cy += 36;
+        }
+        if (ui.button(cx, cy, widths[2], 28, gif, false) && available) {
+            recorder.makeGif();
+        }
+        String hint;
+        int color = Ui.FAINT;
+        if (!available) {
+            hint = strings.get(overlay.legacyRenderer() ? "rec.legacy" : "rec.unsupported");
+        } else if (overlay.ffmpeg().path() == null) {
+            hint = strings.get("rec.noFfmpeg");
+        } else if (recorder.recording()) {
+            long seconds = recorder.recordingMillis() / 1000;
+            hint = strings.format("rec.status", String.format("%02d:%02d", seconds / 60, seconds % 60), recorder.dropped());
+            color = Ui.MUTED;
+        } else {
+            hint = strings.format("rec.keys", Hotkeys.name(options.hotkeyRecord), Hotkeys.name(options.hotkeySave));
+            if (options.replayBuffer && !recorder.bufferProblem().isEmpty()) {
+                hint = strings.format("rec.bufferStopped", recorder.bufferProblem());
+                color = Ui.DANGER;
+            } else if (recorder.dropped() > 0) {
+                hint += " · " + strings.format("rec.dropped", recorder.dropped());
+            }
+        }
+        ui.textFit(ui.regular, 12, x, cy + 38, w, color, hint);
+        return cy + 62;
     }
 
     private void screenshots(Ui ui, float x, float y, float w, float h) {

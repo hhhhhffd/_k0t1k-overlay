@@ -44,6 +44,8 @@ public final class Overlay implements Function<Object[], Object> {
     private final ConcurrentLinkedQueue<Runnable> renderQueue = new ConcurrentLinkedQueue<>();
     private final Executor render = renderQueue::add;
     private final ScheduledExecutorService ioThread = Executors.newSingleThreadScheduledExecutor(daemon("io"));
+    /** Recording work (starting ffmpeg, downloading it, saving) takes long enough to keep off the io thread. */
+    private final ScheduledExecutorService recordThread = Executors.newSingleThreadScheduledExecutor(daemon("record"));
     private final ExecutorService searchThread = Executors.newSingleThreadExecutor(daemon("search"));
     /** {@link #ioThread} with failures reported instead of dropped inside a future. */
     private final Executor io = task -> ioThread.execute(() -> {
@@ -71,10 +73,13 @@ public final class Overlay implements Function<Object[], Object> {
     private final SettingsView settingsView;
     private Cat cat;
     private final Media media;
-    private final Replay replay;
+    private final Ffmpeg ffmpeg;
+    private final Recorder recorder;
     private GlCapture capture;
-    /** Set when reading frames back failed; the replay buffer then stays off for this game. */
+    /** Set when reading frames back failed; recording then stays off for this game. */
     private boolean captureBroken;
+    /** Set while the settings wait for a key to bind; receives the combination, or 0 to cancel. */
+    private java.util.function.IntConsumer keyCapture;
     private final CrashGuard crashGuard;
     private final Browser browser;
     private final BrowserView browserView;
@@ -172,7 +177,9 @@ public final class Overlay implements Function<Object[], Object> {
                 toast(strings.get("media.now"), track);
             }
         };
-        replay = new Replay(options.gameDir, this::report);
+        ffmpeg = new Ffmpeg(options, recordThread);
+        recorder = new Recorder(options, ffmpeg, recordThread, render,
+                (title, body) -> render.execute(() -> toast(title, body)), this::report);
         browser = new Browser(options.dataDir, io, options.lang);
         browserView = new BrowserView(browser, strings, this, io);
         crashGuard = new CrashGuard(options.dataDir);
@@ -332,7 +339,7 @@ public final class Overlay implements Function<Object[], Object> {
         chat.pollNow();
         notes.saveNow();
         media.stop();
-        replay.stop();
+        recorder.shutdown();
         Path report = stats.saveOnExit();
         if (report != null && options.crashDialog) {
             try {
@@ -355,54 +362,70 @@ public final class Overlay implements Function<Object[], Object> {
                 + "Position: " + (game.inWorld ? game.dimension + " " + game.blockPosition() : "not in a world") + "\n";
     }
 
-    /** Saves the replay buffer (Shift+F2 or the tools tab). */
+    /** Saves the replay buffer (the save hotkey or the tools tab). */
     void saveReplay() {
-        if (!replayAvailable()) {
-            toast(strings.get("replay.title"), strings.get(options.replay ? "replay.unsupported" : "replay.off"));
-            return;
+        if (captureSupported()) {
+            recorder.saveReplay();
         }
-        if (replay.saving()) {
-            return;
-        }
-        toast(strings.get("replay.title"), strings.get("replay.saving"));
-        replay.save(options.replayFormat, file -> render.execute(() -> {
-            if (file == null) {
-                toast(strings.get("replay.title"), strings.get("replay.failed"));
-                return;
-            }
-            toast(strings.get("replay.saved"), file.getFileName() + "\n" + file.getParent());
-            catSays("cat.replay");
-        }));
     }
 
-    /** Whether frames are being recorded: the setting on, a renderer that reads frames back, nothing broken. */
-    boolean replayAvailable() {
-        return replayWanted() && (capture != null || vk != null && vk.recording());
+    /** Starts or stops a recording (the record hotkey or the tools tab). */
+    void toggleRecording() {
+        if (captureSupported()) {
+            recorder.toggleRecording();
+        }
     }
 
-    /** Whether the replay buffer wants frames at all; cheaper than {@link #replayDue}. */
+    /** Whether this game's renderer can give frames to the recorder; says why not when it cannot. */
+    boolean captureSupported() {
+        if (!captureAvailable()) {
+            toast(strings.get("rec.title"), strings.get(legacyRenderer() ? "rec.legacy" : "rec.unsupported"));
+            return false;
+        }
+        return true;
+    }
+
+    /** Whether the renderer wants frames at all; cheaper than {@link #replayDue}. */
     boolean replayWanted() {
-        return options.replay && !captureBroken;
+        return !captureBroken && recorder.wanted();
     }
 
-    /** Vulkan: whether to read back this frame for the replay buffer; when true the frame is claimed. */
-    boolean replayDue(long now) {
-        return replayWanted() && replay.due(now);
+    /** Vulkan: whether to read back this frame for the recorder; when true the frame is claimed. */
+    boolean replayDue(int width, int height) {
+        return replayWanted() && recorder.due(width, height);
     }
 
-    /** Vulkan: a frame read back for the replay buffer. */
-    void replayFrame(GlCapture.Frame frame) {
-        replay.add(frame);
-    }
-
-    /** Vulkan: reading frames back failed; the replay buffer stays off for this game, the overlay stays. */
+    /** Vulkan: reading frames back failed; recording stays off for this game, the overlay stays. */
     void replayFailed(Throwable error) {
         captureBroken = true;
-        report(error);
+        recorder.failed(error);
+        toast(strings.get("rec.title"), strings.get("rec.unsupported"));
     }
 
-    Replay replay() {
-        return replay;
+    Recorder recorder() {
+        return recorder;
+    }
+
+    Ffmpeg ffmpeg() {
+        return ffmpeg;
+    }
+
+    /** Whether the game renders in a way recording can read, for the tools tab. */
+    boolean captureAvailable() {
+        return !captureBroken && !legacyRenderer();
+    }
+
+    boolean legacyRenderer() {
+        return platform instanceof LegacyBackend;
+    }
+
+    /** The next key press, with its modifiers, is handed to {@code receiver} as a combination instead of being used. */
+    void captureKey(java.util.function.IntConsumer receiver) {
+        keyCapture = receiver;
+    }
+
+    boolean capturingKey() {
+        return keyCapture != null;
     }
 
     /** The interface scale on automatic, in percent. */
@@ -658,17 +681,36 @@ public final class Overlay implements Function<Object[], Object> {
             // The game never saw this press (the overlay took it), so it must not see the release.
             return true;
         }
-        if (press && key == Keys.TAB && (mods & Keys.MOD_SHIFT) != 0
-                && (mods & (Keys.MOD_CONTROL | Keys.MOD_ALT | Keys.MOD_SUPER)) == 0) {
+        if (press && keyCapture != null) {
+            if (action == Keys.PRESS && !Hotkeys.isModifier(key)) {
+                if (key == Keys.ESCAPE) {
+                    keyCapture.accept(0);
+                    keyCapture = null;
+                } else if (Hotkeys.allowed(key, mods)) {
+                    keyCapture.accept(Hotkeys.of(key, mods));
+                    keyCapture = null;
+                } else {
+                    toast(strings.get("hotkeys.title"), strings.get("hotkeys.needMod"));
+                }
+            }
+            return true;
+        }
+        if (press && Hotkeys.matches(options.hotkeyOpen, key, mods)) {
             if (action == Keys.PRESS) {
                 setOpen(!open);
             }
             return true;
         }
-        if (press && key == Keys.F2 && (mods & Keys.MOD_SHIFT) != 0) {
-            // Shift+F2 saves the replay; the game would take a screenshot on F2 alone.
+        if (press && Hotkeys.matches(options.hotkeySave, key, mods)) {
+            // The game would take a screenshot on F2 alone, so the hotkey is not passed on.
             if (action == Keys.PRESS) {
                 saveReplay();
+            }
+            return true;
+        }
+        if (press && Hotkeys.matches(options.hotkeyRecord, key, mods)) {
+            if (action == Keys.PRESS) {
+                toggleRecording();
             }
             return true;
         }
@@ -785,25 +827,27 @@ public final class Overlay implements Function<Object[], Object> {
         gl.draw(batch);
     }
 
-    /** Reads the game's frame (before the overlay draws on it) into the replay buffer. */
+    /** Reads the game's frame (before the overlay draws on it) for the recorder. */
     private void captureFrame(int width, int height) {
-        if (!options.replay || captureBroken || width <= 0 || height <= 0) {
+        if (captureBroken || width <= 0 || height <= 0) {
             return;
         }
-        long now = System.currentTimeMillis();
-        if (capture == null) {
-            capture = new GlCapture();
-        }
-        if (!replay.due(now)) {
+        if (!recorder.wanted()) {
+            if (capture != null) {
+                capture.release();
+            }
             return;
         }
-        int[] size = Replay.scaled(width, height);
         try {
-            capture.capture(width, height, size[0], size[1], now, replay::add);
+            if (capture == null) {
+                capture = new GlCapture();
+            }
+            if (recorder.due(width, height)) {
+                capture.capture(width, height, recorder);
+            }
         } catch (RuntimeException | LinkageError e) {
-            // The replay buffer is optional: turn it off, keep the overlay.
-            captureBroken = true;
-            report(e);
+            // Recording is optional: turn it off, keep the overlay.
+            replayFailed(e);
         }
     }
 
@@ -820,12 +864,15 @@ public final class Overlay implements Function<Object[], Object> {
         }
         long now = System.currentTimeMillis();
         tickWorld(now);
+        if (captureAvailable()) {
+            recorder.tick();
+        }
         for (Iterator<Toast> it = toasts.iterator(); it.hasNext(); ) {
             if (it.next().until < now) {
                 it.remove();
             }
         }
-        if (!open && !options.hud && toasts.isEmpty() && (cat == null || !cat.talking(now))) {
+        if (!open && !options.hud && toasts.isEmpty() && !recorder.recording() && (cat == null || !cat.talking(now))) {
             return false; // nothing on screen, so the game's frame stays untouched
         }
         if (!platform.hasWindow()) {
@@ -916,6 +963,7 @@ public final class Overlay implements Function<Object[], Object> {
             cat.draw(ui, 16, catBottom, catPixel, open, now);
         }
         float[] catBox = catShown ? cat.bounds(ui, 16, catBottom, catPixel, open, now) : null;
+        recorder.drawIndicator(ui, w);
         drawToasts(w, h, catBox);
     }
 
