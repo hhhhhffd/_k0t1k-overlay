@@ -16,7 +16,14 @@ public interface BrowserEngine {
     int PASTE = 4;
     int SELECT_ALL = 5;
 
-    /** The view size in pixels. */
+    /**
+     * The device scale factor of the screen (the overlay's interface scale). The page lays out in
+     * device independent pixels, {@code pixels / scale}, and is painted at full resolution; mouse
+     * coordinates and the positions the engine reports are in those units.
+     */
+    void scale(double factor);
+
+    /** The view size in physical pixels. */
     void resize(int width, int height);
 
     void load(String url);
@@ -69,7 +76,7 @@ public interface BrowserEngine {
     String pollOpenRequest();
 
     /**
-     * The context menu the player asked for, or null: {x, y} in view pixels, link address, image
+     * The context menu the player asked for, or null: {x, y} in device independent pixels, link address, image
      * address, selected text, "1" when the field under it is editable, the edit-state bits.
      */
     String[] pollContextMenu();

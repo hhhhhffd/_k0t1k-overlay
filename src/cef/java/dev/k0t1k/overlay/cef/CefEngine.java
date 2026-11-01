@@ -272,7 +272,12 @@ public final class CefEngine implements BrowserEngine {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         boolean windows = os.startsWith("windows");
         // The first run would show Chromium's EULA dialog, which cannot open off screen (exit code 28).
-        List<String> args = new ArrayList<>(Arrays.asList("--no-first-run", "--disable-gpu"));
+        // The renderers are never hidden or occluded, but Chromium may still lower the priority of ones
+        // that draw rarely (the closed overlay paints at 1 fps) and throttle their timers, which
+        // starves the audio of a page that plays music in the background.
+        List<String> args = new ArrayList<>(Arrays.asList("--no-first-run", "--disable-gpu",
+                "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+                "--disable-backgrounding-occluded-windows"));
         if (!windows) {
             args.add("--no-sandbox");
         }
@@ -310,6 +315,11 @@ public final class CefEngine implements BrowserEngine {
         // through onScheduleMessagePumpWork, and this first call starts the cycle.
         instance.doMessageLoopWork(0);
         return instance;
+    }
+
+    @Override
+    public void scale(double factor) {
+        browser.scale(factor);
     }
 
     @Override
@@ -386,7 +396,7 @@ public final class CefEngine implements BrowserEngine {
     public void visible(boolean show) {
         if (show != visible) {
             visible = show;
-            browser.setWindowlessFrameRate(show ? 30 : 1);
+            browser.setWindowlessFrameRate(show ? 60 : 1);
         }
     }
 

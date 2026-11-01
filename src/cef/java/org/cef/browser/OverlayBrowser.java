@@ -27,8 +27,10 @@ public final class OverlayBrowser extends CefBrowser_N implements CefRenderHandl
     };
 
     private final Object lock = new Object();
+    /** The view in physical pixels. */
     private int width = 800;
     private int height = 600;
+    private double scale = 1;
     private ByteBuffer pixels;
     private int pixelsWidth;
     private int pixelsHeight;
@@ -46,6 +48,16 @@ public final class OverlayBrowser extends CefBrowser_N implements CefRenderHandl
         if (!created) {
             created = true;
             createBrowser(getClient(), 0, getUrl(), true, false, null, getRequestContext());
+        }
+    }
+
+    /** The device scale factor; CEF reads it through {@link #getScreenInfo} when the view is resized. */
+    public void scale(double factor) {
+        if (factor > 0 && factor != scale) {
+            scale = factor;
+            if (created) {
+                wasResized(width, height);
+            }
         }
     }
 
@@ -242,12 +254,17 @@ public final class OverlayBrowser extends CefBrowser_N implements CefRenderHandl
 
     @Override
     public Rectangle getViewRect(CefBrowser browser) {
-        return new Rectangle(0, 0, width, height);
+        return viewRect();
+    }
+
+    /** The view in device independent pixels, rounded up so CEF paints at least the physical size. */
+    private Rectangle viewRect() {
+        return new Rectangle(0, 0, (int) Math.ceil(width / scale), (int) Math.ceil(height / scale));
     }
 
     @Override
     public boolean getScreenInfo(CefBrowser browser, CefScreenInfo info) {
-        info.Set(1.0, 32, 8, false, new Rectangle(0, 0, width, height), new Rectangle(0, 0, width, height));
+        info.Set(scale, 32, 8, false, viewRect(), viewRect());
         return true;
     }
 

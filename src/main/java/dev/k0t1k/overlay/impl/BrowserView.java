@@ -196,7 +196,14 @@ final class BrowserView {
     }
 
     private void drawPage(Ui ui, Tab tab, BrowserEngine engine, float vx, float vy, float vw, float vh) {
-        engine.resize(Math.max(1, Math.round(vw * ui.scale)), Math.max(1, Math.round(vh * ui.scale)));
+        // The page is painted in whole physical pixels and drawn 1:1 at a whole pixel position; any
+        // fraction would resample it and blur the text.
+        int pixelX = Math.round(vx * ui.scale);
+        int pixelY = Math.round(vy * ui.scale);
+        int pixelW = Math.max(1, Math.round(vw * ui.scale));
+        int pixelH = Math.max(1, Math.round(vh * ui.scale));
+        engine.scale(ui.scale);
+        engine.resize(pixelW, pixelH);
         Browser.Frame frame = tab.frame;
         long version = engine.frame(frame.version, frame.pixels, frame.size);
         if (version == -1) {
@@ -213,14 +220,18 @@ final class BrowserView {
             batch.imageHeight = frame.size[1];
             // Frame versions count per engine; the tab id keeps a switch from looking like an unchanged picture.
             batch.imageVersion = ((long) tab.id << 40) + frame.version;
-            ui.image(vx, vy, vw, vh);
+            // CEF rounds the view up to whole device independent pixels, so the frame can be a little
+            // larger than the area (the clip trims it) or, while resizing, smaller.
+            batch.pushClip(pixelX, pixelY, pixelW, pixelH);
+            batch.image(pixelX, pixelY, frame.size[0], frame.size[1], 0xffffffff);
+            batch.popClip();
         } else {
             center(ui, vx, vy, vw, vh, strings.get("browser.loading"), Ui.FAINT);
         }
         String[] requested = engine.pollContextMenu();
         if (requested != null) {
-            showPageMenu(ui, tab, engine, requested, vx + Integer.parseInt(requested[0]) / ui.scale,
-                    vy + Integer.parseInt(requested[1]) / ui.scale);
+            showPageMenu(ui, tab, engine, requested, vx + Integer.parseInt(requested[0]),
+                    vy + Integer.parseInt(requested[1]));
         }
         input(ui, tab, engine, vx, vy, vw, vh);
         if (engine.loading()) {
@@ -495,6 +506,15 @@ final class BrowserView {
                 open.add(new BrowserData.Entry(t.title(), t.url()));
             }
             data.saveTabs(open, active);
+        }
+    }
+
+    /** The overlay was closed: the tabs stop being drawn, so let them paint rarely. */
+    synchronized void hide() {
+        for (Tab t : tabs) {
+            if (t.engine != null) {
+                t.engine.visible(false);
+            }
         }
     }
 
@@ -1054,8 +1074,9 @@ final class BrowserView {
 
     private void input(Ui ui, Tab tab, BrowserEngine engine, float x, float y, float w, float h) {
         boolean over = ui.hover(x, y, w, h);
-        int px = Math.round((ui.mouseX - x) * ui.scale);
-        int py = Math.round((ui.mouseY - y) * ui.scale);
+        // Device independent pixels, which are the overlay's units.
+        int px = Math.round(ui.mouseX - x);
+        int py = Math.round(ui.mouseY - y);
         int held = (ui.buttonDown(Keys.MOUSE_LEFT) ? InputEvent.BUTTON1_DOWN_MASK : 0)
                 | (ui.buttonDown(Keys.MOUSE_MIDDLE) ? InputEvent.BUTTON2_DOWN_MASK : 0)
                 | (ui.buttonDown(Keys.MOUSE_RIGHT) ? InputEvent.BUTTON3_DOWN_MASK : 0);

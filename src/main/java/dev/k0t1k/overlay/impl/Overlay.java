@@ -939,6 +939,7 @@ public final class Overlay implements Function<Object[], Object> {
         } else {
             settingsView.flush();
             browserView.flushSession();
+            browserView.hide();
             if (hudEditing) {
                 endHudEdit();
             }
