@@ -42,10 +42,43 @@ final class Options {
     int hudCorner;
     /** Whether the cat pops up to react to deaths, advancements, AFK and timers. */
     boolean cat = true;
-    /** Whether the last seconds of the game are kept for Shift+F2 (OpenGL 3.2 and Vulkan). */
-    boolean replay = true;
-    /** "video" (MP4 with ffmpeg, otherwise AVI) or "gif". */
-    String replayFormat = "video";
+    // Recording and the replay buffer (OpenGL 3.2 and Vulkan), encoded by ffmpeg.
+    /** "auto" (downloaded, else on PATH) or "custom" (the file in {@link #ffmpegPath}). */
+    String ffmpegMode = "auto";
+    String ffmpegPath = "";
+    /** An ffmpeg encoder name, or "auto" for the best one that works. */
+    String encoder = "auto";
+    /** "mkv", "mp4" or "mov". */
+    String container = "mkv";
+    /** Whether an MKV recording is remuxed to MP4 when it stops. */
+    boolean remux;
+    int fps = 30;
+    /** "source", "1080" or "720" (the frame's height). */
+    String resolution = "source";
+    /** "low", "medium", "high" or "custom" (then {@link #bitrate}). */
+    String quality = "medium";
+    /** Mbit/s for the custom quality. */
+    int bitrate = 12;
+    /** Where recordings go; empty means {@code <gameDir>/recordings}. */
+    String outputDir = "";
+    /** Whether the last {@link #replaySeconds} seconds are kept for the save-replay hotkey. */
+    boolean replayBuffer;
+    int replaySeconds = 30;
+    boolean audio = true;
+    boolean audioGame = true;
+    boolean audioRest;
+    boolean audioMic;
+    /** Volumes in percent. */
+    int volumeGame = 100;
+    int volumeRest = 100;
+    int volumeMic = 100;
+    int gifFps = 20;
+    int gifWidth = 640;
+    int gifSeconds = 10;
+    /** Key combinations, see {@link Hotkeys}. */
+    int hotkeyOpen = Hotkeys.OPEN;
+    int hotkeyRecord = Hotkeys.RECORD;
+    int hotkeySave = Hotkeys.SAVE;
     /** The interface scale in percent, {@link #MIN_SCALE} to {@link #MAX_SCALE}, or 0 for automatic. */
     int uiScale;
     /** The launcher's interface zoom in percent, or 0 when it is on automatic. */
@@ -121,8 +154,7 @@ final class Options {
         }
         hud = Boolean.parseBoolean(saved.getProperty("hud", "false"));
         cat = Boolean.parseBoolean(saved.getProperty("cat", "true"));
-        replay = Boolean.parseBoolean(saved.getProperty("replay", "true"));
-        replayFormat = "gif".equals(saved.getProperty("replayFormat")) ? "gif" : "video";
+        loadRecording(saved);
         uiScale = parseScale(saved.getProperty("uiScale", "0"), MAX_SCALE);
         try {
             hudCorner = Math.max(0, Math.min(3, Integer.parseInt(saved.getProperty("hudCorner", "0"))));
@@ -137,8 +169,7 @@ final class Options {
         snapshot.setProperty("hud", Boolean.toString(hud));
         snapshot.setProperty("hudCorner", Integer.toString(hudCorner));
         snapshot.setProperty("cat", Boolean.toString(cat));
-        snapshot.setProperty("replay", Boolean.toString(replay));
-        snapshot.setProperty("replayFormat", replayFormat);
+        saveRecording(snapshot);
         snapshot.setProperty("uiScale", Integer.toString(uiScale));
         return () -> {
             try {
@@ -150,5 +181,84 @@ final class Options {
                 throw new IllegalStateException("could not save " + settingsFile, e);
             }
         };
+    }
+
+    private void loadRecording(Properties saved) {
+        ffmpegMode = oneOf(saved.getProperty("ffmpegMode"), "auto", "custom");
+        ffmpegPath = saved.getProperty("ffmpegPath", "");
+        encoder = saved.getProperty("encoder", "auto");
+        container = oneOf(saved.getProperty("container"), "mkv", "mp4", "mov");
+        remux = Boolean.parseBoolean(saved.getProperty("remux", "false"));
+        fps = number(saved, "fps", 30, 30, 60) >= 45 ? 60 : 30;
+        resolution = oneOf(saved.getProperty("resolution"), "source", "1080", "720");
+        quality = oneOf(saved.getProperty("quality"), "medium", "low", "high", "custom");
+        bitrate = number(saved, "bitrate", 12, 1, 100);
+        outputDir = saved.getProperty("outputDir", "");
+        replayBuffer = Boolean.parseBoolean(saved.getProperty("replayBuffer", "false"));
+        replaySeconds = number(saved, "replaySeconds", 30, 15, 300);
+        audio = Boolean.parseBoolean(saved.getProperty("audio", "true"));
+        audioGame = Boolean.parseBoolean(saved.getProperty("audioGame", "true"));
+        audioRest = Boolean.parseBoolean(saved.getProperty("audioRest", "false"));
+        audioMic = Boolean.parseBoolean(saved.getProperty("audioMic", "false"));
+        volumeGame = number(saved, "volumeGame", 100, 0, 200);
+        volumeRest = number(saved, "volumeRest", 100, 0, 200);
+        volumeMic = number(saved, "volumeMic", 100, 0, 200);
+        gifFps = number(saved, "gifFps", 20, 1, 60);
+        gifWidth = number(saved, "gifWidth", 640, 120, 1920);
+        gifSeconds = number(saved, "gifSeconds", 10, 1, 60);
+        hotkeyOpen = number(saved, "hotkeyOpen", Hotkeys.OPEN, Integer.MIN_VALUE, Integer.MAX_VALUE);
+        hotkeyRecord = number(saved, "hotkeyRecord", Hotkeys.RECORD, Integer.MIN_VALUE, Integer.MAX_VALUE);
+        hotkeySave = number(saved, "hotkeySave", Hotkeys.SAVE, Integer.MIN_VALUE, Integer.MAX_VALUE);
+    }
+
+    private void saveRecording(Properties out) {
+        out.setProperty("ffmpegMode", ffmpegMode);
+        out.setProperty("ffmpegPath", ffmpegPath);
+        out.setProperty("encoder", encoder);
+        out.setProperty("container", container);
+        out.setProperty("remux", Boolean.toString(remux));
+        out.setProperty("fps", Integer.toString(fps));
+        out.setProperty("resolution", resolution);
+        out.setProperty("quality", quality);
+        out.setProperty("bitrate", Integer.toString(bitrate));
+        out.setProperty("outputDir", outputDir);
+        out.setProperty("replayBuffer", Boolean.toString(replayBuffer));
+        out.setProperty("replaySeconds", Integer.toString(replaySeconds));
+        out.setProperty("audio", Boolean.toString(audio));
+        out.setProperty("audioGame", Boolean.toString(audioGame));
+        out.setProperty("audioRest", Boolean.toString(audioRest));
+        out.setProperty("audioMic", Boolean.toString(audioMic));
+        out.setProperty("volumeGame", Integer.toString(volumeGame));
+        out.setProperty("volumeRest", Integer.toString(volumeRest));
+        out.setProperty("volumeMic", Integer.toString(volumeMic));
+        out.setProperty("gifFps", Integer.toString(gifFps));
+        out.setProperty("gifWidth", Integer.toString(gifWidth));
+        out.setProperty("gifSeconds", Integer.toString(gifSeconds));
+        out.setProperty("hotkeyOpen", Integer.toString(hotkeyOpen));
+        out.setProperty("hotkeyRecord", Integer.toString(hotkeyRecord));
+        out.setProperty("hotkeySave", Integer.toString(hotkeySave));
+    }
+
+    /** {@code value} when it is one of {@code allowed}, else the first of them. */
+    private static String oneOf(String value, String... allowed) {
+        for (String candidate : allowed) {
+            if (candidate.equals(value)) {
+                return candidate;
+            }
+        }
+        return allowed[0];
+    }
+
+    private static int number(Properties saved, String key, int fallback, int min, int max) {
+        try {
+            return Math.max(min, Math.min(max, Integer.parseInt(saved.getProperty(key, "").trim())));
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    /** Where recordings are written. */
+    Path recordingsFolder() {
+        return outputDir.trim().isEmpty() ? gameDir.resolve("recordings") : Paths.get(outputDir.trim());
     }
 }

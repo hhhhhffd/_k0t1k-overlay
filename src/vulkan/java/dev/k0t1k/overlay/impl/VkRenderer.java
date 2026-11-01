@@ -4,7 +4,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.LongBuffer;
 import java.util.HashMap;
 import java.util.Map;
@@ -28,8 +27,8 @@ import static org.lwjgl.vulkan.VK10.*;
  * semaphores the game handed to {@code vkQueuePresentKHR}, and the present then waits on the
  * overlay's own semaphore instead. Swapchains are created with colour attachment usage added, because
  * a game may only copy into its swapchain images, and with transfer source usage where the surface
- * allows it, so the replay buffer can read the game's frame back: before the render pass, the image is
- * scaled down into a small one and copied into a host buffer that is read once the frame's fence
+ * allows it, so the recorder can read the game's frame back: before the render pass, the image is
+ * scaled to the recording size into another one and copied into a host buffer that is read once the frame's fence
  * signals, a few frames later.
  *
  * <p>All of it runs on the thread that presents, which is the thread that owns the queue at that
@@ -245,8 +244,11 @@ final class VkRenderer implements VulkanBackend {
         device.collectFinished();
         recording = swapchain.readable && swapchain.width >= 2 && swapchain.height >= 2
                 && device.captureFilter(swapchain.format) >= 0;
+        if (!recording && overlay.replayWanted()) {
+            overlay.replayFailed(new IllegalStateException("the swapchain cannot be read back"));
+        }
         long now = System.currentTimeMillis();
-        boolean capture = recording && overlay.replayDue(now);
+        boolean capture = recording && overlay.replayDue(swapchain.width, swapchain.height);
         if (!visible && !capture) {
             return;
         }
@@ -1074,18 +1076,12 @@ final class VkRenderer implements VulkanBackend {
         }
 
         /**
-         * Records a read-back of the game's frame, before the overlay draws on it: scaled down and turned
-         * bottom-up RGBA like {@code glReadPixels}, into this slot's buffer, collected once the slot's
-         * fence signals.
-         */
-        /**
          * Makes the capture image and this slot's read-back buffer for the swapchain's size. A failure
          * turns the replay buffer off, as on OpenGL, and leaves the overlay drawing.
          */
         private boolean prepareCapture(Swapchain swapchain, int slot) {
-            int[] size = Replay.scaled(swapchain.width, swapchain.height);
-            int w = size[0];
-            int h = size[1];
+            int w = overlay.recorder().width();
+            int h = overlay.recorder().height();
             int format = captureFormat(swapchain.format);
             try {
                 if (w != captureWidth || h != captureHeight || format != captureImageFormat) {
@@ -1114,6 +1110,11 @@ final class VkRenderer implements VulkanBackend {
             }
         }
 
+        /**
+         * Records a read-back of the game's frame, before the overlay draws on it: scaled to the
+         * recorder's size as top-down RGBA into this slot's buffer, collected once the slot's fence
+         * signals and converted to NV12 by the recorder (a Java loop, which avoids another Vulkan pipeline).
+         */
         private void capture(MemoryStack stack, VkCommandBuffer cmd, Swapchain swapchain, int image, int slot, long time) {
             int w = captureWidth;
             int h = captureHeight;
@@ -1130,9 +1131,7 @@ final class VkRenderer implements VulkanBackend {
             blit.get(0).srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1);
             blit.get(0).srcOffsets(1).set(swapchain.width, swapchain.height, 1);
             blit.get(0).dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1);
-            // Flipped vertically: the replay buffer takes bottom-up rows.
-            blit.get(0).dstOffsets(0).set(0, h, 0);
-            blit.get(0).dstOffsets(1).set(w, 0, 1);
+            blit.get(0).dstOffsets(1).set(w, h, 1);
             vkCmdBlitImage(cmd, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, captureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     blit, captureFilter(swapchain.format));
             // Hand the game's image back as it was, ready for the render pass or the present.
@@ -1181,9 +1180,18 @@ final class VkRenderer implements VulkanBackend {
                 return; // the submit that would have filled it failed
             }
             int bytes = readbackWidth[slot] * readbackHeight[slot] * 4;
-            ByteBuffer copy = ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder());
-            MemoryUtil.memCopy(memAddress(readback[slot].mapped, 0), memAddress(copy, 0), bytes);
-            overlay.replayFrame(new GlCapture.Frame(copy, readbackWidth[slot], readbackHeight[slot], time));
+            Recorder recorder = overlay.recorder();
+            if (readbackWidth[slot] != recorder.width() || readbackHeight[slot] != recorder.height()) {
+                return; // from a recording that has ended
+            }
+            Recorder.Frame frame = recorder.acquire(true);
+            if (frame != null) {
+                // The recorder converts it to NV12 on its writer thread.
+                ByteBuffer pixels = readback[slot].mapped.duplicate();
+                pixels.limit(bytes);
+                pixels.get(frame.data, 0, bytes);
+                recorder.submit(frame);
+            }
         }
 
         private void destroyCapture() {
