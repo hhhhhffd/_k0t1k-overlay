@@ -262,7 +262,7 @@ final class ToolsView {
 
     // ---- screenshots ----
 
-    /** The recording row: record, save the replay buffer, make a GIF, and what state it all is in. Returns the y below it. */
+    /** The recording row: record, save the replay buffer, make an animated WebP, and what state it all is in. Returns the y below it. */
     private float replay(Ui ui, float x, float y, float w) {
         Options options = overlay.options();
         Recorder recorder = overlay.recorder();
@@ -270,8 +270,8 @@ final class ToolsView {
         ui.text(ui.bold, 13, x, y + 6, Ui.FG, strings.get("rec.title"));
         String record = strings.get(recorder.recording() ? "rec.stop" : "rec.start");
         String save = strings.get("replay.save");
-        String gif = strings.get("gif.make");
-        float[] widths = {ui.buttonWidth(record), ui.buttonWidth(save), ui.buttonWidth(gif)};
+        String webp = strings.get("webp.make");
+        float[] widths = {ui.buttonWidth(record), ui.buttonWidth(save), ui.buttonWidth(webp)};
         float cx = x;
         float cy = y + 30;
         if (ui.button(cx, cy, widths[0], 28, record, recorder.recording())) {
@@ -286,8 +286,8 @@ final class ToolsView {
             cx = x;
             cy += 36;
         }
-        if (ui.button(cx, cy, widths[2], 28, gif, false) && available) {
-            recorder.makeGif();
+        if (ui.button(cx, cy, widths[2], 28, webp, false) && available) {
+            recorder.makeWebp();
         }
         String hint;
         int color = Ui.FAINT;

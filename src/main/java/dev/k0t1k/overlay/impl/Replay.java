@@ -3,6 +3,7 @@ package dev.k0t1k.overlay.impl;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -11,7 +12,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -21,7 +21,7 @@ import java.util.function.Consumer;
  * The replay buffer, as OBS does it: the encoder writes a rolling series of two-second Matroska
  * segments into a temporary folder, the oldest are deleted as new ones arrive, and saving joins the
  * finished ones with {@code ffmpeg -c copy}, which takes no re-encoding and so no time. Also turns a
- * saved clip into a GIF.
+ * saved clip into an animated WebP.
  */
 final class Replay {
     static final int SEGMENT_SECONDS = 2;
@@ -43,6 +43,22 @@ final class Replay {
         this.root = options.dataDir.resolve("replay-buffer");
         this.io = io;
         this.onError = onError;
+    }
+
+    /**
+     * Creates an empty file {@code base.ext} in {@code folder}, or {@code base_2.ext}, {@code base_3.ext}... when
+     * that exists, so two clips made within the same second never overwrite each other (ffmpeg runs with
+     * {@code -y} and then writes into the reserved file).
+     */
+    static Path reserve(Path folder, String base, String extension) throws IOException {
+        for (int n = 1; ; n++) {
+            Path candidate = folder.resolve(base + (n == 1 ? "" : "_" + n) + "." + extension);
+            try {
+                return Files.createFile(candidate);
+            } catch (FileAlreadyExistsException e) {
+                // Taken: try the next number.
+            }
+        }
     }
 
     boolean saving() {
@@ -134,7 +150,7 @@ final class Replay {
             Path target = options.recordingsFolder();
             Files.createDirectories(target);
             String container = options.container;
-            Path out = target.resolve("Replay_" + LocalDateTime.now().format(NAME) + "." + Ffmpeg.extension(container));
+            Path out = reserve(target, "Replay_" + LocalDateTime.now().format(NAME), Ffmpeg.extension(container));
             List<String> command = new ArrayList<>(Arrays.asList(binary, "-hide_banner", "-loglevel", "error", "-y",
                     "-f", "concat", "-safe", "0", "-i", listFile.toString(), "-map", "0", "-c", "copy"));
             if (!"mkv".equals(container)) {
@@ -144,27 +160,34 @@ final class Replay {
                 }
             }
             command.add(out.toString());
-            Ffmpeg.run(command);
+            try {
+                Ffmpeg.run(command);
+            } catch (IOException e) {
+                Files.deleteIfExists(out);
+                throw e;
+            }
             return out;
         } finally {
             saving = false;
         }
     }
 
-    /** Turns the last seconds of {@code clip} into a GIF next to it, with a palette made for this clip. */
-    Path gif(Path clip) throws IOException {
+    /** Turns the last seconds of {@code clip} into an animated WebP next to it. */
+    Path webp(Path clip) throws IOException {
         String binary = ffmpeg.path();
         if (binary == null) {
             throw new IOException("ffmpeg is not installed");
         }
         String name = clip.getFileName().toString();
         int dot = name.lastIndexOf('.');
-        Path out = clip.resolveSibling((dot > 0 ? name.substring(0, dot) : name) + ".gif");
-        String filter = String.format(Locale.ROOT,
-                "fps=%d,scale=%d:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff:max_colors=256[p];"
-                        + "[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle", options.gifFps, options.gifWidth);
-        Ffmpeg.run(Arrays.asList(binary, "-hide_banner", "-loglevel", "error", "-y",
-                "-sseof", "-" + options.gifSeconds, "-i", clip.toString(), "-an", "-vf", filter, "-loop", "0", out.toString()));
+        Path out = reserve(clip.getParent(), dot > 0 ? name.substring(0, dot) : name, "webp");
+        try {
+            Ffmpeg.run(Ffmpeg.webpArgs(binary, clip, out, options.webpSeconds, options.webpFps, options.webpWidth,
+                    options.webpQuality, options.webpLossless));
+        } catch (IOException e) {
+            Files.deleteIfExists(out);
+            throw e;
+        }
         return out;
     }
 
