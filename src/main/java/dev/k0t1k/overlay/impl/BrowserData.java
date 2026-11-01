@@ -30,9 +30,6 @@ final class BrowserData {
         {"YouTube", "https://www.youtube.com/"},
         {"YouTube Music", "https://music.youtube.com/"},
         {"Google", "https://www.google.com/"},
-        {"Modrinth", "https://modrinth.com/"},
-        {"Minecraft Wiki", "https://minecraft.wiki/"},
-        {"CurseForge", "https://www.curseforge.com/minecraft"},
     };
 
     final List<Entry> bookmarks = new ArrayList<>();
