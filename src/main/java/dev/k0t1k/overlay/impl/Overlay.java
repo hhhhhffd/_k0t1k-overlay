@@ -100,6 +100,12 @@ public final class Overlay implements Function<Object[], Object> {
      */
     private volatile Thread renderThread;
     private int tab;
+    /** How far the tab strip is scrolled when it is too wide even with everything else hidden. */
+    private float tabScroll;
+    /** Ctrl+wheel movement not yet worth a scale step. */
+    private float zoomWheel;
+    /** What the interface scale is on automatic, in percent: the launcher's zoom or the screen's step. */
+    private int autoPercent = 100;
     private final int[] sizes = new int[4];
     /** Framebuffer pixels per window coordinate, from the last frame; converts cursor positions. */
     private float pixelRatio = 1;
@@ -155,7 +161,7 @@ public final class Overlay implements Function<Object[], Object> {
         toolsView = new ToolsView(strings, this, game, timers, screenshots);
         modsView = new ModsView(mods, strings, this);
         profileView = new ProfileView(stats, strings);
-        settingsView = new SettingsView(options, saveSettings);
+        settingsView = new SettingsView(this);
         media = new Media(ioThread, render, this::report);
         media.onTrack = track -> {
             if (!open) {
@@ -389,6 +395,19 @@ public final class Overlay implements Function<Object[], Object> {
         return replay;
     }
 
+    /** The interface scale on automatic, in percent. */
+    int autoScalePercent() {
+        return autoPercent;
+    }
+
+    /** Sets the interface scale in percent, {@link Options#MIN_SCALE} to {@link Options#MAX_SCALE}; 0 is automatic. */
+    void setUiScale(int percent) {
+        if (percent != options.uiScale) {
+            options.uiScale = percent;
+            saveSettings();
+        }
+    }
+
     Options options() {
         return options;
     }
@@ -585,6 +604,7 @@ public final class Overlay implements Function<Object[], Object> {
         }
         ensureUi();
         input();
+        ui.mods = mods;
         boolean press = action != Keys.RELEASE;
         if (!press && !gameKeys.remove(key) && open) {
             // The game never saw this press (the overlay took it), so it must not see the release.
@@ -758,10 +778,25 @@ public final class Overlay implements Function<Object[], Object> {
         ensureUi();
         ui.platform = platform;
         pixelRatio = width / (float) sizes[2];
-        // HiDPI: the larger of the OS scale and the framebuffer density, shrunk if the UI would not fit.
-        float scale = Math.max(platform.contentScale(), pixelRatio);
-        scale = Math.min(scale, Math.min(width / 860f, height / 480f));
-        ui.scale = Math.max(0.75f, scale);
+        // Framebuffer pixels per logical unit of the OS: its content scale, or the framebuffer
+        // density where the window is counted in points (macOS, Wayland).
+        float density = Math.max(platform.contentScale(), pixelRatio);
+        // The launcher's page is zoomed by its setting, or by a step chosen from its screen width in
+        // logical pixels; automatic follows it so both look the same size.
+        autoPercent = options.launcherScale > 0 ? options.launcherScale
+                : Options.autoScale(platform.monitorWidth() / platform.contentScale());
+        float scale = density * (options.uiScale > 0 ? options.uiScale : autoPercent) / 100f;
+        // Only a window too small for the interface shrinks it; anything bigger keeps the chosen size.
+        float fit = Math.min(width / 640f, height / 360f);
+        if (scale > fit) {
+            scale = Math.max(fit, 0.5f);
+        }
+        if (scale != ui.scale) {
+            // Keep the pointer over the same spot of the screen.
+            ui.mouseX *= ui.scale / scale;
+            ui.mouseY *= ui.scale / scale;
+            ui.scale = scale;
+        }
         if (atlas.full) {
             atlas.reset();
         }
@@ -824,34 +859,71 @@ public final class Overlay implements Function<Object[], Object> {
         float barH = 48;
         ui.rect(0, 0, w, barH, 0xf013101c);
         ui.rect(0, barH, w, 1, Ui.LINE);
+        String clock = LocalTime.now().format(CLOCK);
+        long minutes = (System.currentTimeMillis() - started) / 60000;
+        String session = strings.format("session", String.format("%d:%02d", minutes / 60, minutes % 60));
+        float clockW = ui.measure(ui.bold, 16, clock);
+        float sessionW = ui.measure(ui.regular, 11, session);
+        float brandW = ui.measure(ui.bold, 16, "_k0t1k");
+        float subtitleW = 6 + ui.measure(ui.regular, 13, "overlay");
+
+        float labelsW = 0;
+        for (String tabKey : TABS) {
+            labelsW += ui.measure(ui.bold, 13, strings.get(tabKey));
+        }
+        // Fit the tabs between the brand and the clock: tighter padding first, then drop the
+        // subtitle and the session time, then the clock; a strip still too wide scrolls.
+        int stage = 0;
+        float tabPad;
+        float left;
+        float right;
+        float stripW;
+        while (true) {
+            tabPad = stage == 0 ? 32 : stage == 1 ? 18 : 10;
+            left = 18 + brandW + (stage < 3 ? subtitleW : 0) + 16;
+            right = w - (stage < 4 ? 18 + Math.max(clockW, stage < 3 ? sessionW : 0) + 16 : 18);
+            stripW = labelsW + TABS.length * tabPad + (TABS.length - 1) * 6;
+            if (stripW <= right - left || stage == 4) {
+                break;
+            }
+            stage++;
+        }
+
         float bx = 18;
         bx += ui.text(ui.bold, 16, bx, (barH - ui.lineHeight(ui.bold, 16)) / 2, Ui.ACCENT, "_k0t1k");
-        ui.text(ui.regular, 13, bx + 6, (barH - ui.lineHeight(ui.regular, 13)) / 2 + 1, Ui.FAINT, "overlay");
-
-        float tabsW = 0;
-        float[] widths = new float[TABS.length];
-        // Narrow windows get tighter tabs so they stay clear of the brand and the clock.
-        float tabPad = w < 1000 ? 18 : 32;
-        for (int i = 0; i < TABS.length; i++) {
-            widths[i] = ui.measure(ui.bold, 13, strings.get(TABS[i])) + tabPad;
-            tabsW += widths[i] + 6;
+        if (stage < 3) {
+            ui.text(ui.regular, 13, bx + 6, (barH - ui.lineHeight(ui.regular, 13)) / 2 + 1, Ui.FAINT, "overlay");
         }
-        float tx = (w - tabsW) / 2;
+        if (stage < 4) {
+            ui.text(ui.bold, 16, w - 18 - clockW, 7, Ui.FG, clock);
+            if (stage < 3) {
+                ui.text(ui.regular, 11, w - 18 - sessionW, 27, Ui.FAINT, session);
+            }
+        }
+
+        float room = right - left;
+        float tx;
+        if (stripW <= room) {
+            tabScroll = 0;
+            // Centred on the screen unless the brand or the clock is in the way.
+            tx = Math.max(left, Math.min((w - stripW) / 2, right - stripW));
+        } else {
+            tabScroll = Math.max(0, Math.min(tabScroll - ui.takeScroll(left, 0, room, barH) * 40, stripW - room));
+            tx = left - tabScroll;
+            ui.clip(left, 0, room, barH);
+        }
         for (int i = 0; i < TABS.length; i++) {
-            if (ui.pill(tx, 9, widths[i], 30, strings.get(TABS[i]), tab == i)) {
+            String label = strings.get(TABS[i]);
+            float tabW = ui.measure(ui.bold, 13, label) + tabPad;
+            if (tx + tabW > left && tx < right && ui.pill(tx, 9, tabW, 30, label, tab == i)) {
                 tab = i;
                 ui.focus = null;
             }
-            tx += widths[i] + 6;
+            tx += tabW + 6;
         }
-
-        String clock = LocalTime.now().format(CLOCK);
-        float cw = ui.measure(ui.bold, 16, clock);
-        ui.text(ui.bold, 16, w - 18 - cw, 7, Ui.FG, clock);
-        long minutes = (System.currentTimeMillis() - started) / 60000;
-        String session = strings.format("session", String.format("%d:%02d", minutes / 60, minutes % 60));
-        float sw = ui.measure(ui.regular, 11, session);
-        ui.text(ui.regular, 11, w - 18 - sw, 27, Ui.FAINT, session);
+        if (stripW > room) {
+            ui.unclip();
+        }
 
         // Content card.
         float cardW = Math.min(w - 32, 1120);
@@ -890,10 +962,55 @@ public final class Overlay implements Function<Object[], Object> {
                 settingsView.draw(ui, x, y, innerW, innerH);
                 break;
         }
+        zoomShortcuts();
 
         String hint = strings.get("hint.close");
         ui.text(ui.regular, 12, (w - ui.measure(ui.regular, 12, hint)) / 2, h - 24, Ui.FAINT, hint);
         drawMedia(w, h);
+    }
+
+    /**
+     * Ctrl+wheel and Ctrl with plus, minus or 0 change the interface scale. It runs after the tab drew,
+     * so content that uses these itself (the browser page) takes the input first: wheel movement it
+     * took is gone, and a key it took must be removed from {@code ui.keys}.
+     */
+    private void zoomShortcuts() {
+        if (Ui.shortcut(ui.mods)) {
+            zoomWheel += ui.scrollY;
+            ui.scrollY = 0;
+        } else {
+            zoomWheel = 0;
+        }
+        while (Math.abs(zoomWheel) >= 1) {
+            zoom(zoomWheel > 0 ? 10 : -10);
+            zoomWheel -= Math.signum(zoomWheel);
+        }
+        for (int[] k : ui.keys) {
+            if (!Ui.shortcut(k[1])) {
+                continue;
+            }
+            switch (k[0]) {
+                case Keys.EQUAL:
+                case Keys.KP_ADD:
+                    zoom(10);
+                    break;
+                case Keys.MINUS:
+                case Keys.KP_SUBTRACT:
+                    zoom(-10);
+                    break;
+                case Keys.ZERO:
+                case Keys.KP_0:
+                    setUiScale(0);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    private void zoom(int delta) {
+        int current = options.uiScale > 0 ? options.uiScale : autoPercent;
+        setUiScale(Math.max(Options.MIN_SCALE, Math.min(Options.MAX_SCALE, current + delta)));
     }
 
     /** What plays on the computer, with previous, play/pause and next, in the strip under the card. */

@@ -14,6 +14,12 @@ interface Platform {
     /** The monitor's UI scale as the OS reports it (1 when unknown). */
     float contentScale();
 
+    /**
+     * Width in physical pixels of the monitor the window is on (the primary one when that is not
+     * known), or 0 when unknown.
+     */
+    int monitorWidth();
+
     String clipboard();
 
     void setClipboard(String text);

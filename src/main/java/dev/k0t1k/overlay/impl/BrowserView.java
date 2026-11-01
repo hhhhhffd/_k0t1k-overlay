@@ -212,7 +212,7 @@ final class BrowserView {
             pressed = false;
             engine.mouse(MouseEvent.MOUSE_RELEASED, px, py, 0, 1, MouseEvent.BUTTON1);
         }
-        float scroll = ui.takeScroll(x, y, w, h);
+        float scroll = ui.takeZoomScroll(x, y, w, h);
         if (scroll != 0) {
             engine.wheel(px, py, 0, -Math.round(scroll));
         }

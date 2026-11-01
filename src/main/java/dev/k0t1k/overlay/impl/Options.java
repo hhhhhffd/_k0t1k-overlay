@@ -19,9 +19,17 @@ import java.util.Properties;
  *   <li>{@code gameDir}: the game folder; default the working directory, which launchers set to it
  *   <li>{@code lang}: {@code en} (default) or {@code ru}
  *   <li>{@code crashDialog}: {@code false} turns off the overlay's own crash window
+ *   <li>{@code scale}: the launcher's interface zoom in percent ({@value #MIN_SCALE} to
+ *       {@value #MAX_LAUNCHER_SCALE}). The overlay's automatic interface scale follows it, as the launcher's
+ *       does; absent or invalid means the launcher is on automatic, which grows with the screen width
  * </ul>
  */
 final class Options {
+    /** The range of the player's interface scale, in percent. */
+    static final int MIN_SCALE = 50;
+    static final int MAX_SCALE = 200;
+    static final int MAX_LAUNCHER_SCALE = 300;
+
     final Path gameDir;
     final Path dataDir;
     final Strings strings;
@@ -38,6 +46,10 @@ final class Options {
     boolean replay = true;
     /** "video" (MP4 with ffmpeg, otherwise AVI) or "gif". */
     String replayFormat = "video";
+    /** The interface scale in percent, {@link #MIN_SCALE} to {@link #MAX_SCALE}, or 0 for automatic. */
+    int uiScale;
+    /** The launcher's interface zoom in percent, or 0 when it is on automatic. */
+    final int launcherScale;
     /** Whether the overlay shows its own crash window; a launcher with its own can turn it off. */
     final boolean crashDialog;
     final String lang;
@@ -57,6 +69,7 @@ final class Options {
         lang = option(args, "lang", "en");
         strings = new Strings(lang);
         crashDialog = !"false".equalsIgnoreCase(option(args, "crashDialog", "true"));
+        launcherScale = parseScale(option(args, "scale", ""), MAX_LAUNCHER_SCALE);
         username = usernameFromCommandLine();
         settingsFile = dataDir.resolve("overlay.properties");
     }
@@ -67,6 +80,24 @@ final class Options {
             value = args.getProperty(key);
         }
         return value == null || value.isEmpty() ? fallback : value;
+    }
+
+    /** The percent in {@code text}, or 0 when it is not a number from {@link #MIN_SCALE} to {@code max}. */
+    private static int parseScale(String text, int max) {
+        try {
+            int value = Integer.parseInt(text.trim());
+            return value >= MIN_SCALE && value <= max ? value : 0;
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * What the launcher's interface zoom is when its setting is unset (apps/app autoScale): by the
+     * screen width in logical pixels, which the operating system's scale has already divided out.
+     */
+    static int autoScale(float logicalWidth) {
+        return logicalWidth >= 3400 ? 150 : logicalWidth >= 2500 ? 125 : 100;
     }
 
     /** {@code --username} from the game's arguments; player names never contain spaces. */
@@ -92,6 +123,7 @@ final class Options {
         cat = Boolean.parseBoolean(saved.getProperty("cat", "true"));
         replay = Boolean.parseBoolean(saved.getProperty("replay", "true"));
         replayFormat = "gif".equals(saved.getProperty("replayFormat")) ? "gif" : "video";
+        uiScale = parseScale(saved.getProperty("uiScale", "0"), MAX_SCALE);
         try {
             hudCorner = Math.max(0, Math.min(3, Integer.parseInt(saved.getProperty("hudCorner", "0"))));
         } catch (NumberFormatException e) {
@@ -107,6 +139,7 @@ final class Options {
         snapshot.setProperty("cat", Boolean.toString(cat));
         snapshot.setProperty("replay", Boolean.toString(replay));
         snapshot.setProperty("replayFormat", replayFormat);
+        snapshot.setProperty("uiScale", Integer.toString(uiScale));
         return () -> {
             try {
                 Files.createDirectories(dataDir);

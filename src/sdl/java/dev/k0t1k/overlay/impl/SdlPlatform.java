@@ -2,6 +2,7 @@ package dev.k0t1k.overlay.impl;
 
 import java.nio.IntBuffer;
 
+import org.lwjgl.sdl.SDL_DisplayMode;
 import org.lwjgl.sdl.SDL_Event;
 import org.lwjgl.sdl.SDL_KeyboardEvent;
 import org.lwjgl.sdl.SDL_MouseButtonEvent;
@@ -18,6 +19,8 @@ import static org.lwjgl.sdl.SDLMouse.SDL_GetWindowRelativeMouseMode;
 import static org.lwjgl.sdl.SDLMouse.SDL_SetWindowRelativeMouseMode;
 import static org.lwjgl.sdl.SDLMouse.SDL_WarpMouseInWindow;
 import static org.lwjgl.sdl.SDLVideo.SDL_GL_GetCurrentContext;
+import static org.lwjgl.sdl.SDLVideo.SDL_GetCurrentDisplayMode;
+import static org.lwjgl.sdl.SDLVideo.SDL_GetDisplayForWindow;
 import static org.lwjgl.sdl.SDLVideo.SDL_GetWindowDisplayScale;
 import static org.lwjgl.sdl.SDLVideo.SDL_GetWindowSize;
 import static org.lwjgl.sdl.SDLVideo.SDL_GetWindowSizeInPixels;
@@ -177,8 +180,14 @@ final class SdlPlatform implements SdlBackend {
                 return Keys.ESCAPE;
             case 42:
                 return Keys.BACKSPACE;
+            case 39:
+                return Keys.ZERO;
             case 43:
                 return Keys.TAB;
+            case 45:
+                return Keys.MINUS;
+            case 46:
+                return Keys.EQUAL;
             case 59:
                 return Keys.F2;
             case 74:
@@ -199,8 +208,14 @@ final class SdlPlatform implements SdlBackend {
                 return Keys.DOWN;
             case 82:
                 return Keys.UP;
+            case 86:
+                return Keys.KP_SUBTRACT;
+            case 87:
+                return Keys.KP_ADD;
             case 88:
                 return Keys.KP_ENTER;
+            case 98:
+                return Keys.KP_0;
             default:
                 // Keys the overlay has no use for, kept distinct so press/release pairs still match.
                 return 100000 + scancode;
@@ -269,6 +284,13 @@ final class SdlPlatform implements SdlBackend {
     @Override
     public float contentScale() {
         return Math.max(1, SDL_GetWindowDisplayScale(window));
+    }
+
+    @Override
+    public int monitorWidth() {
+        SDL_DisplayMode mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+        // The mode is in screen coordinates; the density turns them into pixels.
+        return mode == null ? 0 : Math.round(mode.w() * mode.pixel_density());
     }
 
     @Override

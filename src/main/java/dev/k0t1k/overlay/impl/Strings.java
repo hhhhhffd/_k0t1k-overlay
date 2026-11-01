@@ -12,6 +12,11 @@ final class Strings {
         russian = lang.toLowerCase(java.util.Locale.ROOT).startsWith("ru");
         add("tab.chat", "Chat", "Чат");
         add("tab.settings", "Settings", "Настройки");
+        add("settings.interface", "Interface", "Интерфейс");
+        add("settings.scale", "Interface scale", "Масштаб интерфейса");
+        add("settings.scaleAuto", "Auto (%d%%)", "Авто (%d%%)");
+        add("settings.scaleHint", "Ctrl + mouse wheel or Ctrl + plus / minus changes it, Ctrl+0 returns to Auto",
+                "Ctrl + колесо мыши или Ctrl + плюс / минус меняют его, Ctrl+0 — вернуть Авто");
         add("settings.hud", "HUD", "HUD");
         add("settings.cat", "Cat", "Кот");
         add("settings.replay", "Replay", "Повтор");

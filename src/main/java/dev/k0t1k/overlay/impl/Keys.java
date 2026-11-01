@@ -5,6 +5,9 @@ package dev.k0t1k.overlay.impl;
  * window library translates its own codes into these.
  */
 final class Keys {
+    static final int MINUS = 45;
+    static final int ZERO = 48;
+    static final int EQUAL = 61;
     static final int A = 65;
     static final int C = 67;
     static final int V = 86;
@@ -23,6 +26,9 @@ final class Keys {
     static final int HOME = 268;
     static final int END = 269;
     static final int F2 = 291;
+    static final int KP_0 = 320;
+    static final int KP_SUBTRACT = 333;
+    static final int KP_ADD = 334;
     static final int KP_ENTER = 335;
 
     static final int MOD_SHIFT = 1;

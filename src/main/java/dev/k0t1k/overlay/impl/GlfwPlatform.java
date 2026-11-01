@@ -12,6 +12,7 @@ import org.lwjgl.glfw.GLFWCursorPosCallbackI;
 import org.lwjgl.glfw.GLFWKeyCallbackI;
 import org.lwjgl.glfw.GLFWMouseButtonCallbackI;
 import org.lwjgl.glfw.GLFWScrollCallbackI;
+import org.lwjgl.glfw.GLFWVidMode;
 
 import static org.lwjgl.glfw.GLFW.*;
 
@@ -73,6 +74,16 @@ final class GlfwPlatform implements Platform {
     public float contentScale() {
         glfwGetWindowContentScale(window, sx, sy);
         return Math.max(1, sx.get(0));
+    }
+
+    @Override
+    public int monitorWidth() {
+        long monitor = glfwGetWindowMonitor(window);
+        if (monitor == 0) {
+            monitor = glfwGetPrimaryMonitor();
+        }
+        GLFWVidMode mode = monitor == 0 ? null : glfwGetVideoMode(monitor);
+        return mode == null ? 0 : mode.width();
     }
 
     @Override

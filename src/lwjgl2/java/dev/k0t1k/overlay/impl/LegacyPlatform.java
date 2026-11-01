@@ -154,6 +154,12 @@ final class LegacyPlatform implements LegacyBackend {
             case Keyboard.KEY_PRIOR: return Keys.PAGE_UP;
             case Keyboard.KEY_NEXT: return Keys.PAGE_DOWN;
             case Keyboard.KEY_END: return Keys.END;
+            case Keyboard.KEY_0: return Keys.ZERO;
+            case Keyboard.KEY_MINUS: return Keys.MINUS;
+            case Keyboard.KEY_EQUALS: return Keys.EQUAL;
+            case Keyboard.KEY_NUMPAD0: return Keys.KP_0;
+            case Keyboard.KEY_SUBTRACT: return Keys.KP_SUBTRACT;
+            case Keyboard.KEY_ADD: return Keys.KP_ADD;
             case Keyboard.KEY_A: return Keys.A;
             case Keyboard.KEY_C: return Keys.C;
             case Keyboard.KEY_V: return Keys.V;
@@ -198,6 +204,11 @@ final class LegacyPlatform implements LegacyBackend {
     @Override
     public float contentScale() {
         return 1;
+    }
+
+    @Override
+    public int monitorWidth() {
+        return Display.getDesktopDisplayMode().getWidth();
     }
 
     @Override

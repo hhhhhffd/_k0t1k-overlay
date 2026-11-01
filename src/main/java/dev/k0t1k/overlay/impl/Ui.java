@@ -49,10 +49,14 @@ final class Ui {
     private final boolean[] buttonDown = new boolean[Keys.MOUSE_FORWARD + 1];
     boolean doubleClicked;
     float scrollY;
+    /** Modifier bits of the latest key event, so wheel and mouse input can tell whether Ctrl is held. */
+    int mods;
     final List<int[]> keys = new ArrayList<>(); // {key, mods} for presses and repeats
     final StringBuilder chars = new StringBuilder();
     private long lastClickTime;
 
+    /** The slider being dragged (the id it was given), or null. */
+    private Object dragging;
     /** The text field that receives keyboard input, or null. */
     Object focus;
     /** Set when a widget consumed the click, so clicking empty space can drop the focus. */
@@ -151,6 +155,7 @@ final class Ui {
     void resetInput() {
         endFrame();
         mouseDown = false;
+        dragging = null;
         java.util.Arrays.fill(buttonDown, false);
         focus = null;
     }
@@ -167,8 +172,16 @@ final class Ui {
         return false;
     }
 
-    /** Takes the wheel movement over a region, in lines (positive = towards the top). */
+    /**
+     * Takes the wheel movement over a region, in lines (positive = towards the top). Ctrl+wheel is
+     * left alone: the overlay uses it to change the interface scale.
+     */
     float takeScroll(float x, float y, float w, float h) {
+        return shortcut(mods) ? 0 : takeZoomScroll(x, y, w, h);
+    }
+
+    /** Like {@link #takeScroll}, but also takes Ctrl+wheel, for content that zooms by itself (the browser page). */
+    float takeZoomScroll(float x, float y, float w, float h) {
         if (scrollY == 0 || !hover(x, y, w, h)) {
             return 0;
         }
@@ -369,6 +382,39 @@ final class Ui {
         float tw = measure(bold, 13, label);
         text(bold, 13, x + (w - tw) / 2, y + (h - lineHeight(bold, 13)) / 2, active ? 0xffd4b0ff : MUTED, label);
         return clickedIn(x, y, w, h);
+    }
+
+    /** Whether the slider with this id is being dragged. */
+    boolean dragging(Object id) {
+        return dragging == id;
+    }
+
+    /**
+     * A horizontal slider from {@code min} to {@code max} in multiples of {@code step}, 16 units
+     * tall. {@code id} tells sliders apart while one is dragged. Returns the new value; the caller
+     * draws the value's label.
+     */
+    float slider(Object id, float x, float y, float w, float min, float max, float step, float value) {
+        float h = 16;
+        float thumb = 14;
+        boolean hot = hover(x, y, w, h);
+        if (clickedIn(x, y, w, h)) {
+            dragging = id;
+        }
+        if (dragging == id) {
+            float t = Math.max(0, Math.min(1, (mouseX - x - thumb / 2) / (w - thumb)));
+            value = min + Math.round(t * (max - min) / step) * step;
+            value = Math.max(min, Math.min(max, value));
+        }
+        if (!mouseDown && dragging == id) {
+            dragging = null;
+        }
+        float t = max > min ? (value - min) / (max - min) : 0;
+        float tx = x + t * (w - thumb);
+        round(x, y + h / 2 - 2, w, 4, 2, LINE);
+        round(x, y + h / 2 - 2, tx - x + thumb / 2, 4, 2, ACCENT);
+        round(tx, y + (h - thumb) / 2, thumb, thumb, thumb / 2, dragging == id || hot ? 0xffd4b0ff : FG);
+        return value;
     }
 
     boolean checkbox(float x, float y, String label, boolean value) {

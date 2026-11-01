@@ -7,24 +7,27 @@ package dev.k0t1k.overlay.impl;
  * it from {@link #draw} in the same order.
  */
 final class SettingsView {
-    private static final String[] SECTIONS = {"settings.hud", "settings.cat", "settings.replay"};
-    private static final int HUD = 0;
-    private static final int CAT = 1;
-    private static final int REPLAY = 2;
+    private static final String[] SECTIONS = {"settings.interface", "settings.hud", "settings.cat", "settings.replay"};
+    private static final int INTERFACE = 0;
+    private static final int HUD = 1;
+    private static final int CAT = 2;
+    private static final int REPLAY = 3;
 
+    private final Overlay overlay;
     private final Options options;
     private final Strings strings;
-    private final Runnable saveSettings;
+    /** The percent shown while the scale slider is dragged; the scale itself changes on release. */
+    private int draggedScale;
     private float scroll;
     /** The y of the top of the column, so a section can tell where it starts within it. */
     private float viewTop;
     /** Where each section starts, as an offset from the top of the column; set while drawing. */
     private final float[] tops = new float[SECTIONS.length];
 
-    SettingsView(Options options, Runnable saveSettings) {
-        this.options = options;
+    SettingsView(Overlay overlay) {
+        this.overlay = overlay;
+        this.options = overlay.options();
         this.strings = options.strings;
-        this.saveSettings = saveSettings;
     }
 
     void draw(Ui ui, float x, float y, float w, float h) {
@@ -36,6 +39,7 @@ final class SettingsView {
         viewTop = y;
         float cy = y - scroll;
         ui.clip(cx, y, cw, h);
+        cy = interfaceSection(ui, cx, cy, cw);
         cy = hudSection(ui, cx, cy, cw);
         cy = catSection(ui, cx, cy, cw);
         cy = replaySection(ui, cx, cy, cw);
@@ -69,7 +73,38 @@ final class SettingsView {
     }
 
     private void changed() {
-        saveSettings.run();
+        overlay.saveSettings();
+    }
+
+    private float interfaceSection(Ui ui, float x, float y, float w) {
+        y = heading(ui, INTERFACE, x, y, w);
+        int auto = overlay.autoScalePercent();
+        ui.text(ui.regular, 13, x, y + 4, Ui.MUTED, strings.get("settings.scale"));
+        y += 28;
+        // Changing the scale moves the slider under the pointer, so while dragging only the label
+        // follows the pointer and the scale is applied on release.
+        boolean dragging = ui.dragging(this);
+        int shown = dragging ? draggedScale : Math.max(Options.MIN_SCALE,
+                Math.min(Options.MAX_SCALE, options.uiScale > 0 ? options.uiScale : auto));
+        String autoLabel = strings.format("settings.scaleAuto", auto);
+        float aw = ui.measure(ui.bold, 13, autoLabel) + 24;
+        if (ui.pill(x, y, aw, 28, autoLabel, options.uiScale == 0 && !dragging)) {
+            overlay.setUiScale(0);
+        }
+        float sx = x + aw + 16;
+        float sw = Math.min(260, w - aw - 16 - 56);
+        int value = Math.round(ui.slider(this, sx, y + 6, sw,
+                Options.MIN_SCALE, Options.MAX_SCALE, 5, shown));
+        if (ui.dragging(this)) {
+            draggedScale = value;
+        } else if (dragging) {
+            overlay.setUiScale(draggedScale);
+        } else if (value != shown) {
+            overlay.setUiScale(value);
+        }
+        ui.text(ui.bold, 13, sx + sw + 12, y + 6, Ui.FG, ui.dragging(this) ? draggedScale + "%" : shown + "%");
+        ui.textFit(ui.regular, 12, x, y + 40, w, Ui.FAINT, strings.get("settings.scaleHint"));
+        return y + 72;
     }
 
     private float hudSection(Ui ui, float x, float y, float w) {
@@ -80,7 +115,7 @@ final class SettingsView {
             changed();
         }
         String corner = strings.get("perf.corner");
-        float cx = x + 300;
+        float cx = x + 40 + 24 + ui.measure(ui.regular, 13, strings.get("perf.hud"));
         ui.text(ui.regular, 13, cx, y + 5, Ui.MUTED, corner);
         cx += ui.measure(ui.regular, 13, corner) + 10;
         String[] arrows = {"↖", "↗", "↙", "↘"};

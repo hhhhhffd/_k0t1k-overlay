@@ -42,6 +42,7 @@ list before the profile's JVM arguments, which is what a `-javaagent` needs.
 | `-javaagent:<jar>=lang=ru` | Use the absolute jar path. Put only simple `key=value,key=value` options after the `=`; the agent splits that text on commas. |
 | `-Dk0t1k.overlay.dataDir=<dir>` | Pass paths as system properties. A system property wins over the agent argument and can contain commas and spaces. `std::process::Command` passes each argument verbatim, so no quoting is needed. |
 | `-Dk0t1k.overlay.lang=ru` | Equivalent to `lang=` in the agent argument. |
+| `-javaagent:<jar>=lang=ru,scale=125` | The launcher's interface zoom in percent (50 to 300), also `-Dk0t1k.overlay.scale`. The overlay's automatic interface scale follows it, so both look the same size. Leave it out when the launcher's zoom is on automatic: the overlay then picks 100%, 125% or 150% from the screen width, like the launcher does. Anything else is ignored. |
 | `-Dk0t1k.overlay.gameDir=<dir>` | Only needed if the working directory is not the game folder. The launcher already starts the game in `game_dir`, so leave it out. |
 
 **Language:** the launcher forces `-Duser.language=en`, so the agent cannot detect the language by
@@ -63,7 +64,7 @@ The agent creates these files on demand:
 |---|---|
 | `chat-history.tsv` | Every chat line ever received, one per line: `epoch ms TAB server TAB text`. Backslash escapes tab, newline and itself. Append-only, so it grows forever, by roughly 100 bytes per message. |
 | `notes/<id>.txt` | One UTF-8 file per note. |
-| `overlay.properties` | HUD on/off and its corner. |
+| `overlay.properties` | The settings: HUD on/off and its corner, the cat, the replay buffer, the interface scale. |
 
 - Several games can run at the same time with the same `dataDir`. Each appends to the history in
   one write per batch.
@@ -165,6 +166,6 @@ of the project does. The agent was tested this way. Two environment problems can
 - **No channel to the launcher.** A local WebSocket was discussed as the transport for launcher
   features inside the game, such as chat with friends, support tickets or the resource pack
   converter. It is not designed or implemented. The user will specify it.
-- **No settings from the launcher** beyond `lang` and `dataDir`. The HUD on/off setting lives in
+- **No settings from the launcher** beyond `lang`, `dataDir` and `scale`. The player's settings live in
   `overlay.properties`. Neither the hotkey nor the enable switch can be set in the agent; the
   launcher decides whether to add the agent at all.
