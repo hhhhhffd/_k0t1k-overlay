@@ -8,6 +8,14 @@ import java.nio.ByteBuffer;
  * nothing else from the overlay. Input uses java.awt.event ids, key codes and extended modifier masks.
  */
 public interface BrowserEngine {
+    /** Commands for {@link #command}, run on the focused frame. */
+    int UNDO = 0;
+    int REDO = 1;
+    int CUT = 2;
+    int COPY = 3;
+    int PASTE = 4;
+    int SELECT_ALL = 5;
+
     /** The view size in pixels. */
     void resize(int width, int height);
 
@@ -39,6 +47,37 @@ public interface BrowserEngine {
      * {@code seen}; fills {@code size} with its width and height and returns its version.
      */
     long frame(long seen, ByteBuffer out, int[] size);
+
+    /** Page zoom: 0 is 100%, each step scales by 1.2. */
+    void zoom(double level);
+
+    /** Whether the tab is on screen; hidden ones keep running but draw rarely. */
+    void visible(boolean visible);
+
+    /** Whether the page asked for fullscreen (a video): the view should fill the whole area. */
+    boolean fullscreen();
+
+    void exitFullscreen();
+
+    /** Whether a media element on the page is playing sound. */
+    boolean playing();
+
+    /**
+     * The next link the page wants in a new tab, as {@code open:<url>} (to switch to) or
+     * {@code background:<url>} (middle or Ctrl click), or null.
+     */
+    String pollOpenRequest();
+
+    /**
+     * The context menu the player asked for, or null: {x, y} in view pixels, link address, image
+     * address, selected text, "1" when the field under it is editable, the edit-state bits.
+     */
+    String[] pollContextMenu();
+
+    void command(int command);
+
+    /** Deletes the cookies of every site (logins included). */
+    void clearCookies();
 
     void close();
 }
