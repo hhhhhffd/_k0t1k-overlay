@@ -4,8 +4,7 @@ P.scriptlet = function (name, args) {
   name = String(name).replace(/\.js$/, '');
   var table = {
     'json-prune': jsonPrune,
-    // The fetch and XHR variants prune every JSON the page reads, not only those of one address.
-    'json-prune-fetch-response': jsonPrune, 'json-prune-xhr-response': jsonPrune,
+    'json-prune-fetch-response': jsonPruneFetch, 'json-prune-xhr-response': jsonPruneXhr,
     'set-constant': setConstant, 'set': setConstant,
     'abort-on-property-read': function (a) { trap(a[0], true); }, 'aopr': function (a) { trap(a[0], true); },
     'abort-on-property-write': function (a) { trap(a[0], false); }, 'aopw': function (a) { trap(a[0], false); }
@@ -27,20 +26,92 @@ P.scriptlet = function (name, args) {
       each(obj[key], segs, i + 1, visit);
     }
   }
-  function jsonPrune(a) {
+  // Returns a function that prunes a parsed value in place and says whether it changed anything.
+  function pruner(a) {
     var prune = paths(a[0]), needed = paths(a[1]);
-    function clean(value) {
-      if (!value || typeof value !== 'object') return value;
+    return function (value) {
+      if (!value || typeof value !== 'object') return false;
       var ok = needed.every(function (n) { var found = false; each(value, n, 0, function () { found = true; }); return found; });
-      if (ok) prune.forEach(function (p) { each(value, p, 0, function (o, k) { delete o[k]; }); });
-      return value;
+      var changed = false;
+      if (ok) prune.forEach(function (p) { each(value, p, 0, function (o, k) { delete o[k]; changed = true; }); });
+      return changed;
+    };
+  }
+  // JSON.parse wrapper. The stack-matching third argument is not supported, so such rules are skipped.
+  function jsonPrune(a) {
+    if (a[2]) return;
+    var clean = pruner(a), parse = JSON.parse;
+    JSON.parse = function () { var value = parse.apply(this, arguments); clean(value); return value; };
+  }
+  // The request filter of the fetch/XHR variants: (rawPrune, rawNeedle[, 'propsToMatch', 'url:pattern']).
+  // Returns a function of the request address, or null when the rule uses anything else.
+  function requestMatcher(extra) {
+    if (!extra.length) return function () { return true; };
+    if (extra.length !== 2 || extra[0] !== 'propsToMatch') return null;
+    var tests = [];
+    var tokens = String(extra[1]).split(/\s+/).filter(Boolean);
+    for (var i = 0; i < tokens.length; i++) {
+      var m = /^url:(.*)$/.exec(tokens[i]);
+      var pattern = m ? m[1] : tokens[i];
+      if (!m && /^[a-z]+:[^/]/.test(pattern)) return null; // another property, such as method:
+      var re = /^\/(.+)\/([gimsu]*)$/.exec(pattern);
+      if (re) {
+        var rx = new RegExp(re[1], re[2].replace('g', ''));
+        tests.push(function (url) { return rx.test(url); });
+      } else {
+        tests.push((function (text) { return function (url) { return url.indexOf(text) !== -1; }; })(pattern));
+      }
     }
-    var parse = JSON.parse;
-    JSON.parse = function () { return clean(parse.apply(this, arguments)); };
-    if (window.Response && Response.prototype.json) {
-      var json = Response.prototype.json;
-      Response.prototype.json = function () { return json.apply(this, arguments).then(clean); };
-    }
+    return function (url) { return tests.every(function (t) { return t(url); }); };
+  }
+  function absolute(url) { return new URL(String(url), location.href).href; }
+  function jsonPruneFetch(a) {
+    var matches = requestMatcher(a.slice(2));
+    if (!matches || !window.fetch || !window.Response) return;
+    var clean = pruner(a), parse = JSON.parse, fetch = window.fetch;
+    window.fetch = function (input) {
+      var result = fetch.apply(this, arguments), url;
+      try { url = absolute(input && input.url || input); } catch (e) { return result; }
+      if (!matches(url)) return result;
+      return result.then(function (response) {
+        return response.clone().text().then(function (text) {
+          var value = parse(text);
+          if (!clean(value)) return response;
+          return new Response(JSON.stringify(value), { status: response.status, statusText: response.statusText, headers: response.headers });
+        }).catch(function () { return response; });
+      });
+    };
+  }
+  function jsonPruneXhr(a) {
+    var matches = requestMatcher(a.slice(2));
+    if (!matches || !window.XMLHttpRequest) return;
+    var clean = pruner(a), parse = JSON.parse, proto = XMLHttpRequest.prototype, open = proto.open;
+    var text = Object.getOwnPropertyDescriptor(proto, 'responseText'), body = Object.getOwnPropertyDescriptor(proto, 'response');
+    if (!text || !body) return;
+    proto.open = function (method, url) {
+      var xhr = this, hit = false;
+      try { hit = matches(absolute(url)); } catch (e) {}
+      if (hit) {
+        var seen = null, pruned = null;
+        var prunedText = function (raw) {
+          if (typeof raw !== 'string' || !raw) return raw;
+          if (raw === seen) return pruned;
+          seen = raw; pruned = raw;
+          try { var value = parse(raw); if (clean(value)) pruned = JSON.stringify(value); } catch (e) {}
+          return pruned;
+        };
+        Object.defineProperty(xhr, 'responseText', { configurable: true, get: function () { return prunedText(text.get.call(xhr)); } });
+        Object.defineProperty(xhr, 'response', {
+          configurable: true,
+          get: function () {
+            var raw = body.get.call(xhr);
+            if (xhr.responseType === 'json') { clean(raw); return raw; }
+            return xhr.responseType === '' || xhr.responseType === 'text' ? prunedText(raw) : raw;
+          }
+        });
+      }
+      return open.apply(this, arguments);
+    };
   }
   function constant(text) {
     switch (text) {
