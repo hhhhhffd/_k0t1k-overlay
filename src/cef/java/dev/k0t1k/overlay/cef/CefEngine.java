@@ -70,6 +70,8 @@ public final class CefEngine implements BrowserEngine {
     private final Queue<String> openRequests = new ConcurrentLinkedQueue<>();
     private final AtomicReference<String[]> contextMenu = new AtomicReference<>();
     private volatile String url = "";
+    /** Address of the top-level document, read by the network thread; the first-party cookie URL is only its registrable site. */
+    private volatile String pageUrl = "";
     private volatile String title = "";
     private volatile boolean loading;
     private volatile boolean fullscreen;
@@ -85,6 +87,7 @@ public final class CefEngine implements BrowserEngine {
     private CefEngine(CefClient client, String start, Predicate<String[]> blocker, BiFunction<String, Boolean, String> scripts) {
         this.client = client;
         this.url = start;
+        this.pageUrl = start;
         this.scripts = scripts;
         if (blocker != null) {
             addBlocker(blocker);
@@ -107,6 +110,7 @@ public final class CefEngine implements BrowserEngine {
             public void onAddressChange(CefBrowser b, CefFrame frame, String address) {
                 if (frame == null || frame.isMain()) {
                     url = address;
+                    pageUrl = nonNull(address);
                     inject(frame, false);
                 }
             }
@@ -145,6 +149,7 @@ public final class CefEngine implements BrowserEngine {
             public void onLoadStart(CefBrowser b, CefFrame frame, CefRequest.TransitionType transitionType) {
                 if (frame != null && frame.isMain()) {
                     blocked.set(0);
+                    pageUrl = nonNull(frame.getURL());
                     inject(frame, true);
                 }
             }
@@ -190,11 +195,19 @@ public final class CefEngine implements BrowserEngine {
                     if (type == CefRequest.ResourceType.RT_MAIN_FRAME) {
                         return false;
                     }
-                    String page = request.getFirstPartyForCookies();
-                    if (page == null || page.isEmpty()) {
-                        page = request.getReferrerURL();
+                    String page = pageUrl;
+                    if (page.isEmpty()) {
+                        page = request.getFirstPartyForCookies();
+                        if (page == null || page.isEmpty()) {
+                            page = request.getReferrerURL();
+                        }
                     }
-                    if (blocker.test(new String[] {request.getURL(), type.name(), nonNull(page)})) {
+                    // Rules' domain= is about the document making the request, which for an iframe is not the top page.
+                    String document = frame != null && !frame.isMain() ? nonNull(frame.getURL()) : "";
+                    if (document.isEmpty()) {
+                        document = nonNull(page);
+                    }
+                    if (blocker.test(new String[] {request.getURL(), type.name(), nonNull(page), document})) {
                         blocked.incrementAndGet();
                         return true;
                     }

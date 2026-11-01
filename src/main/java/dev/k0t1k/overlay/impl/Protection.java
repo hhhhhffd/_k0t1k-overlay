@@ -458,8 +458,9 @@ final class Protection {
     // ---- what Chromium asks ----
 
     /**
-     * For Chromium's network thread: {request address, resource type name, address of the page} to
-     * whether the request is cancelled.
+     * For Chromium's network thread: {request address, resource type name, address of the top-level page,
+     * address of the document making the request} to whether the request is cancelled. The shield and
+     * per-site switches follow the top page; {@code domain=} and third-party tests the document.
      */
     Predicate<String[]> blocker() {
         return request -> {
@@ -468,13 +469,14 @@ final class Protection {
                 return false;
             }
             String page = NetFilter.host(request[2]);
+            String document = NetFilter.host(request[3]);
             int type = NetFilter.typeOfRequest(request[1]);
             if (options.protectBlock && siteOn(page, ADS) && !s.adsNet.documentOff(page)
-                    && s.adsNet.blocks(request[0], type, page)) {
+                    && s.adsNet.blocks(request[0], type, document)) {
                 return true;
             }
             return options.protectCookies && siteOn(page, COOKIES) && !s.cookieNet.documentOff(page)
-                    && s.cookieNet.blocks(request[0], type, page);
+                    && s.cookieNet.blocks(request[0], type, document);
         };
     }
 
