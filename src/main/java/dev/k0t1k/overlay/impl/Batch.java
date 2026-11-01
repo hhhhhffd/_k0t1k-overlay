@@ -14,6 +14,7 @@ import java.util.List;
  * <p>Vertex layout ({@link #STRIDE} bytes): position (2 floats), uv (2 floats), params (4 floats:
  * half width, half height, corner radius, mode) and colour (RGBA bytes). Mode 1 samples the atlas and
  * uv is a texture coordinate; mode 2 samples the {@link #image} (the browser's page, BGRA) the same way;
+ * mode 3 samples the same picture with its own alpha (site icons, stored below the page);
  * mode 0 is a rounded box and uv is the offset from its centre. Quads are drawn as the index pattern
  * 0 1 2 2 3 0.
  */
@@ -46,6 +47,9 @@ final class Batch {
     final ByteBuffer atlas = ByteBuffer.allocateDirect(ATLAS * ATLAS);
     /** The atlas region changed since the renderer last uploaded it, {x0, y0, x1, y1}; x0 > x1 when clean. */
     final int[] dirty = {ATLAS, ATLAS, 0, 0};
+
+    /** Rows added below the page in the image for the site icons ({@code Favicons.CELL} high cells). */
+    static final int ICON_ROWS = 2 * Favicons.CELL;
 
     /** One picture per frame for mode 2 quads: BGRA, top-down rows, replaced when its version changes. */
     ByteBuffer image;
@@ -136,6 +140,11 @@ final class Batch {
     /** Draws the whole {@link #image} into the rectangle; the colour's alpha fades it. */
     void image(float x, float y, float w, float h, int argb) {
         quad(x, y, x + w, y + h, 0, 0, 1, 1, 0, 0, 0, 2, argb);
+    }
+
+    /** Draws a part of the {@link #image} with its alpha, uv in 0..1 of the whole picture. */
+    void imagePart(float x, float y, float w, float h, float u0, float v0, float u1, float v1) {
+        quad(x, y, x + w, y + h, u0, v0, u1, v1, 0, 0, 0, 3, 0xffffffff);
     }
 
     private void quad(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1,

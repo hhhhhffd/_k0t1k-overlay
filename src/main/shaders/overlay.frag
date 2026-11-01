@@ -13,7 +13,11 @@ layout(location = 0) out vec4 fragColor;
 void main() {
     vec3 rgb = vColor.rgb;
     float coverage = 1.0;
-    if (vParams.w > 1.5) {
+    if (vParams.w > 2.5) {
+        vec4 icon = texture(image, vUv);
+        rgb = icon.rgb;
+        coverage = icon.a;
+    } else if (vParams.w > 1.5) {
         rgb = texture(image, vUv).rgb;
     } else if (vParams.w > 0.5) {
         coverage = texture(atlas, vUv).r;

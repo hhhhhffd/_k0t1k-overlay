@@ -57,6 +57,8 @@ public final class CefEngine implements BrowserEngine {
             + "else if(t&&t!=='_self'&&t!=='_top'&&t!=='_parent'){e.preventDefault();say('open:'+a.href);}},true);"
             + "document.addEventListener('auxclick',function(e){var a=link(e);"
             + "if(e.button===1&&a&&/^https?:/.test(a.href)){e.preventDefault();say('background:'+a.href);}},true);"
+            + "function icon(){if(window!==window.top)return;var l=document.querySelector('link[rel~=\"icon\"][href]');"
+            + "if(l&&/^https?:/.test(l.href))say('icon:'+l.href);}icon();"
             + "function media(){var n=0;document.querySelectorAll('video,audio').forEach(function(m){"
             + "if(!m.paused&&!m.ended&&!m.muted&&m.volume>0)n++;});say('media:'+n);}"
             + "['play','pause','ended','volumechange'].forEach(function(t){document.addEventListener(t,media,true);});})();";
@@ -76,6 +78,7 @@ public final class CefEngine implements BrowserEngine {
     private volatile boolean loading;
     private volatile boolean fullscreen;
     private volatile boolean playing;
+    private volatile String icon = "";
     private final AtomicInteger blocked = new AtomicInteger();
     private final BiFunction<String, Boolean, String> scripts;
     private boolean scriptFailed;
@@ -133,6 +136,8 @@ public final class CefEngine implements BrowserEngine {
                 String report = message.substring(PREFIX.length());
                 if (report.startsWith("media:")) {
                     playing = !report.equals("media:0");
+                } else if (report.startsWith("icon:")) {
+                    icon = report.substring("icon:".length());
                 } else if (openRequests.size() < MAX_OPEN_REQUESTS) {
                     openRequests.add(report);
                 }
@@ -149,6 +154,7 @@ public final class CefEngine implements BrowserEngine {
             public void onLoadStart(CefBrowser b, CefFrame frame, CefRequest.TransitionType transitionType) {
                 if (frame != null && frame.isMain()) {
                     blocked.set(0);
+                    icon = "";
                     pageUrl = nonNull(frame.getURL());
                     inject(frame, true);
                 }
@@ -350,6 +356,11 @@ public final class CefEngine implements BrowserEngine {
     @Override
     public String url() {
         return url;
+    }
+
+    @Override
+    public String icon() {
+        return icon;
     }
 
     @Override

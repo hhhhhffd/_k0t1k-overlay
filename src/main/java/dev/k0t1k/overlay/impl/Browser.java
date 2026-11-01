@@ -377,5 +377,10 @@ final class Browser {
         ByteBuffer pixels = ByteBuffer.allocateDirect(4);
         final int[] size = new int[2];
         long version;
+        /** What the icon rows below the page hold: the page size and {@code Favicons.stamp} they were laid out for. */
+        int iconWidth;
+        int iconHeight;
+        int iconStamp;
+        int iconCount;
     }
 }

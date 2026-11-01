@@ -236,6 +236,12 @@ final class Ui {
         batch.image(x * scale, y * scale, w * scale, h * scale, 0xffffffff);
     }
 
+    /** Draws a part of the batch's image with its alpha, in a square at whole pixels. */
+    void imagePart(float x, float y, float size, float u0, float v0, float u1, float v1) {
+        batch.imagePart(Math.round(x * scale), Math.round(y * scale), Math.round(size * scale), Math.round(size * scale),
+                u0, v0, u1, v1);
+    }
+
     void clip(float x, float y, float w, float h) {
         batch.pushClip(x * scale, y * scale, w * scale, h * scale);
         clips.push(new float[] {x, y, w, h});

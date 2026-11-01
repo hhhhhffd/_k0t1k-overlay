@@ -108,6 +108,10 @@ final class BrowserView {
     private float dragFromX;
     private boolean dragMoved;
 
+    private final Favicons favicons;
+    /** The frame whose icon rows hold the icons for this draw, or null when there are none to draw. */
+    private Browser.Frame iconFrame;
+
     private String savedSession = "";
     private long sessionCheck;
     private long zoomShownUntil;
@@ -118,6 +122,7 @@ final class BrowserView {
         this.strings = strings;
         this.overlay = overlay;
         this.options = overlay.options();
+        this.favicons = new Favicons(options.dataDir, overlay::report);
         this.data = new BrowserData(options.dataDir, task -> {
             pendingWrites.add(task);
             io.execute(this::flushWrites);
@@ -163,6 +168,10 @@ final class BrowserView {
             }
         }
 
+        iconFrame = null;
+        if (engine != null && browser.state == Browser.State.READY && overlay.imagesSupported()) {
+            fetchFrame(tab, engine);
+        }
         float py = y;
         if (!full) {
             drawTabs(ui, x, y, w);
@@ -205,21 +214,13 @@ final class BrowserView {
         engine.scale(ui.scale);
         engine.resize(pixelW, pixelH);
         Browser.Frame frame = tab.frame;
-        long version = engine.frame(frame.version, frame.pixels, frame.size);
-        if (version == -1) {
-            frame.pixels = java.nio.ByteBuffer.allocateDirect(frame.size[0] * frame.size[1] * 4);
-            version = engine.frame(frame.version, frame.pixels, frame.size);
-        }
-        if (version > 0) {
-            frame.version = version;
-        }
         if (frame.version > 0) {
             Batch batch = ui.batch;
             batch.image = frame.pixels;
             batch.imageWidth = frame.size[0];
-            batch.imageHeight = frame.size[1];
+            batch.imageHeight = frame.size[1] + Batch.ICON_ROWS;
             // Frame versions count per engine; the tab id keeps a switch from looking like an unchanged picture.
-            batch.imageVersion = ((long) tab.id << 40) + frame.version;
+            batch.imageVersion = ((long) tab.id << 48) + ((long) frame.iconStamp << 32) + frame.version;
             // CEF rounds the view up to whole device independent pixels, so the frame can be a little
             // larger than the area (the clip trims it) or, while resizing, smaller.
             batch.pushClip(pixelX, pixelY, pixelW, pixelH);
@@ -243,6 +244,78 @@ final class BrowserView {
             ui.panel(vx + vw - lw - 12, vy + 12, lw, 28, 8, Ui.RAISED, Ui.LINE);
             ui.text(ui.bold, 13, vx + vw - lw, vy + 12 + (28 - ui.lineHeight(ui.bold, 13)) / 2, Ui.FG, label);
         }
+    }
+
+    /**
+     * Takes the engine's newest frame, and lays the site icons out in the rows below it: they travel to
+     * the renderer inside the same picture, so tabs and bookmarks need no texture of their own.
+     */
+    private void fetchFrame(Tab tab, BrowserEngine engine) {
+        for (Tab t : tabs) {
+            String host = host(t.url());
+            favicons.want(host);
+            if (t.engine != null) {
+                favicons.page(host, t.engine.icon(), t.engine.loading());
+            }
+        }
+        for (BrowserData.Entry e : data.bookmarks) {
+            favicons.want(host(e.url));
+        }
+        Browser.Frame frame = tab.frame;
+        long version = engine.frame(frame.version, frame.pixels, frame.size);
+        int needed = frame.size[0] * (frame.size[1] + Batch.ICON_ROWS) * 4;
+        if (frame.size[0] > 0 && frame.pixels.capacity() < needed) {
+            frame.pixels = java.nio.ByteBuffer.allocateDirect(needed);
+            frame.iconWidth = 0;
+            version = engine.frame(0, frame.pixels, frame.size);
+        }
+        if (version > 0) {
+            frame.version = version;
+        }
+        int w = frame.size[0];
+        int h = frame.size[1];
+        if (frame.version == 0 || w < Favicons.CELL) {
+            return;
+        }
+        int stamp = favicons.stamp();
+        int perRow = w / Favicons.CELL;
+        if (frame.iconWidth != w || frame.iconHeight != h || frame.iconStamp != stamp) {
+            frame.iconCount = Math.min(favicons.count(), perRow * Batch.ICON_ROWS / Favicons.CELL);
+            java.nio.ByteBuffer bytes = frame.pixels.duplicate();
+            bytes.clear();
+            java.nio.IntBuffer ints = bytes.order(java.nio.ByteOrder.LITTLE_ENDIAN).asIntBuffer();
+            for (int slot = 0; slot < frame.iconCount; slot++) {
+                int[] cell = favicons.pixels(slot);
+                int x = slot % perRow * Favicons.CELL;
+                int y = h + slot / perRow * Favicons.CELL;
+                for (int row = 0; row < Favicons.CELL; row++) {
+                    ints.position((y + row) * w + x);
+                    ints.put(cell, row * Favicons.CELL, Favicons.CELL);
+                }
+            }
+            frame.iconWidth = w;
+            frame.iconHeight = h;
+            frame.iconStamp = stamp;
+        }
+        iconFrame = frame;
+    }
+
+    /** Draws the host's icon in a square, or returns false (nothing drawn) when it has none yet. */
+    private boolean drawFavicon(Ui ui, String host, float x, float y, float size) {
+        Browser.Frame f = iconFrame;
+        int slot = host.isEmpty() || f == null ? -1 : favicons.slot(host);
+        if (slot < 0 || slot >= f.iconCount) {
+            return false;
+        }
+        int w = f.size[0];
+        float total = f.size[1] + Batch.ICON_ROWS;
+        int perRow = w / Favicons.CELL;
+        float left = slot % perRow * Favicons.CELL;
+        float top = f.size[1] + slot / perRow * Favicons.CELL;
+        // Half a texel in from each edge keeps a neighbour's colour out of the filtered edge.
+        ui.imagePart(x, y, size, (left + 0.5f) / w, (top + 0.5f) / total,
+                (left + Favicons.CELL - 0.5f) / w, (top + Favicons.CELL - 0.5f) / total);
+        return true;
     }
 
     private void drawSetup(Ui ui, Tab tab, float x, float y, float w, float h) {
@@ -369,8 +442,7 @@ final class BrowserView {
     }
 
     /**
-     * A round badge with the site's first letter, or a turning ring while the page loads. Real favicons
-     * would need a second picture per frame, which the renderers do not draw.
+     * A turning ring while the page loads, else the site's icon, else a round badge with its first letter.
      */
     private void drawIcon(Ui ui, Tab t, float x, float y) {
         if (t.engine != null && t.engine.loading()) {
@@ -384,6 +456,9 @@ final class BrowserView {
             return;
         }
         String host = host(t.url());
+        if (drawFavicon(ui, host, x, y, 16)) {
+            return;
+        }
         int color = ICON_COLORS[Math.abs(host.hashCode()) % ICON_COLORS.length];
         ui.round(x, y, 16, 16, 8, color);
         if (!host.isEmpty()) {
@@ -795,7 +870,9 @@ final class BrowserView {
             } else if (hot) {
                 ui.round(ix, y, widths[i], MARK_H, 8, Ui.HOVER);
             }
-            ui.round(ix + 8, y + (MARK_H - 14) / 2, 14, 14, 7, ICON_COLORS[Math.abs(host(e.url).hashCode()) % ICON_COLORS.length]);
+            if (!drawFavicon(ui, host(e.url), ix + 7, y + (MARK_H - 16) / 2, 16)) {
+                ui.round(ix + 8, y + (MARK_H - 14) / 2, 14, 14, 7, ICON_COLORS[Math.abs(host(e.url).hashCode()) % ICON_COLORS.length]);
+            }
             ui.textFit(ui.regular, 13, ix + 28, y + (MARK_H - ui.lineHeight(ui.regular, 13)) / 2, widths[i] - 34, Ui.FG, e.title);
             if (ui.clickedIn(ix, y, widths[i], MARK_H)) {
                 dragged = e;

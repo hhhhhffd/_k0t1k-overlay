@@ -40,6 +40,9 @@ public interface BrowserEngine {
 
     boolean loading();
 
+    /** The address of the icon the page declared, or empty. */
+    String icon();
+
     void mouse(int id, int x, int y, int modifiers, int clicks, int button);
 
     /** {@code amount} in lines, positive scrolls down. */

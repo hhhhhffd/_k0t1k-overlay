@@ -39,7 +39,7 @@ final class GlRenderer {
             + "  gl_Position = vec4(aPos.x / uViewport.x * 2.0 - 1.0, 1.0 - aPos.y / uViewport.y * 2.0, 0.0, 1.0);\n"
             + "}\n";
     // vParams = (half width, half height, corner radius, mode); mode 1 samples the glyph atlas and
-    // vUv is a texture coordinate, mode 2 samples the image the same way, mode 0 is a rounded box and
+    // vUv is a texture coordinate, mode 2 samples the image the same way, mode 3 does with its alpha, mode 0 is a rounded box and
     // vUv is the offset from its centre.
     private static final String FRAGMENT = "#version 150\n"
             + "uniform sampler2D uAtlas;\n"
@@ -47,6 +47,11 @@ final class GlRenderer {
             + "in vec2 vUv; in vec4 vColor; in vec4 vParams;\n"
             + "out vec4 fragColor;\n"
             + "void main() {\n"
+            + "  if (vParams.w > 2.5) {\n"
+            + "    vec4 icon = texture(uImage, vUv);\n"
+            + "    fragColor = vec4(icon.rgb, vColor.a * icon.a);\n"
+            + "    return;\n"
+            + "  }\n"
             + "  if (vParams.w > 1.5) {\n"
             + "    fragColor = vec4(texture(uImage, vUv).rgb, vColor.a);\n"
             + "    return;\n"
