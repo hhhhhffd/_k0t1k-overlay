@@ -20,6 +20,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
@@ -63,6 +64,8 @@ final class Recorder {
     private static final int POOL = 3;
     /** How long a stop waits for ffmpeg to finish the file once its input has ended. */
     private static final int FINISH_SECONDS = 15;
+    /** How long exiting waits for a save or a recording that is being finished. */
+    private static final int EXIT_WAIT_SECONDS = 10;
     /** How long a stop waits for a frame write that does not return before it kills ffmpeg. */
     private static final int STUCK_WRITE_SECONDS = 2;
     private static final String COLOR_TAGS = "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv";
@@ -183,6 +186,9 @@ final class Recorder {
 
     /** Writes the replay buffer's last seconds to a file. */
     void saveReplay() {
+        if (shuttingDown) {
+            return;
+        }
         Session session = buffer;
         if (session == null || session.state != State.RUNNING) {
             notify.accept(strings.get("replay.title"), strings.get(options.replayBuffer
@@ -475,9 +481,15 @@ final class Recorder {
 
     // ---- sessions ----
 
-    /** Stops everything and waits for the files to be finished; the JVM is exiting. */
+    /**
+     * Stops everything and waits for the files to be finished; the JVM is exiting. Commands are refused
+     * from here on. A replay save or a recording being finished (remux included) gets {@link #EXIT_WAIT_SECONDS}
+     * in total before the buffer is torn down, which would delete the segments the save reads.
+     */
     void shutdown() {
         shuttingDown = true;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(EXIT_WAIT_SECONDS);
+        awaitUntil(deadline, () -> !busy);
         Session[] sessions = {recording, buffer};
         for (Session session : sessions) {
             if (session != null) {
@@ -489,6 +501,19 @@ final class Recorder {
             if (session != null) {
                 session.awaitLaunch();
             }
+        }
+        // A session already being stopped on the io thread is not ended before its files are complete.
+        awaitUntil(deadline, () -> (recording == null || recording.state == State.ENDED)
+                && (buffer == null || buffer.state == State.ENDED));
+    }
+
+    private static void awaitUntil(long deadline, BooleanSupplier done) {
+        try {
+            while (!done.getAsBoolean() && System.nanoTime() - deadline < 0) {
+                Thread.sleep(25);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -845,10 +870,18 @@ final class Recorder {
             }
             boolean ok = teardown();
             String reason = lastError();
-            state = State.ENDED;
-            if (isBuffer || !report) {
-                return;
+            try {
+                if (!isBuffer && report) {
+                    publish(ok, reason);
+                }
+            } finally {
+                // Only now: until the file is complete (remux included) the session is still being tracked.
+                state = State.ENDED;
             }
+        }
+
+        /** Reports a finished recording and remuxes it to MP4 when asked to. */
+        private void publish(boolean ok, String reason) {
             if (!ok && (file == null || !Files.exists(file))) {
                 notify.accept(strings.get("rec.failed"), reason.isEmpty() ? strings.get("rec.unknown") : reason);
                 return;

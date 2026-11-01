@@ -1,11 +1,15 @@
 package dev.k0t1k.overlay.impl;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
+import java.nio.channels.FileChannel;
+import java.nio.channels.OverlappingFileLockException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -22,9 +26,14 @@ import java.util.function.Consumer;
  * segments into a temporary folder, the oldest are deleted as new ones arrive, and saving joins the
  * finished ones with {@code ffmpeg -c copy}, which takes no re-encoding and so no time. Also turns a
  * saved clip into an animated WebP.
+ *
+ * <p>Games that share a data folder must not touch each other's segments, so every buffer lives in its
+ * own subfolder of {@code replay-buffer} and holds a lock on a file in it for as long as it runs. A
+ * folder whose lock is free belongs to a dead game and is cleaned up by the next one to start.
  */
 final class Replay {
     static final int SEGMENT_SECONDS = 2;
+    private static final String LOCK = "owner.lock";
     static final DateTimeFormatter NAME = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH.mm.ss");
 
     private final Options options;
@@ -34,6 +43,8 @@ final class Replay {
     private final Consumer<Throwable> onError;
     private ScheduledFuture<?> pruning;
     private volatile Path folder;
+    /** Holds the lock that tells other games this buffer's folder is in use. */
+    private FileChannel lock;
     private volatile boolean saving;
     private volatile boolean hevc;
 
@@ -65,10 +76,13 @@ final class Replay {
         return saving;
     }
 
-    /** Starts a buffer: clears what an earlier game left behind and returns the folder for the segments. */
+    /** Starts a buffer: clears what dead games left behind and returns this buffer's own folder for the segments. */
     synchronized Path begin(boolean hevcEncoder) throws IOException {
-        deleteTree(root);
-        folder = Files.createDirectories(root);
+        Files.createDirectories(root);
+        Path own = Files.createDirectory(root.resolve(processId() + "-" + System.currentTimeMillis()));
+        lock = lock(own);
+        folder = own;
+        removeStale(root, own);
         hevc = hevcEncoder;
         pruning = io.scheduleWithFixedDelay(this::prune, 1, 1, TimeUnit.SECONDS);
         return folder;
@@ -85,11 +99,81 @@ final class Replay {
             pruning.cancel(false);
             pruning = null;
         }
+        Path own = folder;
         folder = null;
         try {
-            deleteTree(root);
+            if (own != null) {
+                deleteTree(own);
+            }
         } catch (IOException e) {
             onError.accept(e);
+        }
+        if (lock != null) {
+            try {
+                lock.close();
+            } catch (IOException e) {
+                onError.accept(e);
+            }
+            lock = null;
+        }
+    }
+
+    private static String processId() {
+        String name = ManagementFactory.getRuntimeMXBean().getName(); // "pid@host" on the JVMs this runs on
+        int at = name.indexOf('@');
+        return at > 0 ? name.substring(0, at) : "0";
+    }
+
+    /** Creates {@code folder}'s lock file and locks it; the lock lasts until the returned channel is closed. */
+    static FileChannel lock(Path folder) throws IOException {
+        FileChannel channel = FileChannel.open(folder.resolve(LOCK), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+        try {
+            if (channel.tryLock() == null) {
+                throw new IOException("replay buffer folder is locked: " + folder);
+            }
+        } catch (IOException | RuntimeException e) {
+            channel.close();
+            throw e;
+        }
+        return channel;
+    }
+
+    /**
+     * Deletes the buffer folders in {@code root} whose game is gone (their lock is free), except
+     * {@code keep}, and loose files from before buffers had folders. A folder with no lock file yet is
+     * a game that is just starting; it is left alone unless it has been there for a minute.
+     */
+    static void removeStale(Path root, Path keep) {
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(root)) {
+            for (Path entry : stream) {
+                if (entry.equals(keep)) {
+                    continue;
+                }
+                try {
+                    if (!Files.isDirectory(entry)) {
+                        Files.deleteIfExists(entry);
+                    } else if (isStale(entry)) {
+                        deleteTree(entry);
+                    }
+                } catch (IOException | RuntimeException e) {
+                    // In use or not ours to remove: the next start tries again.
+                }
+            }
+        } catch (IOException e) {
+            // No buffer folder to clean.
+        }
+    }
+
+    private static boolean isStale(Path dir) throws IOException {
+        Path lockFile = dir.resolve(LOCK);
+        if (!Files.exists(lockFile)) {
+            return System.currentTimeMillis() - Files.getLastModifiedTime(dir).toMillis() > 60000;
+        }
+        try (FileChannel channel = FileChannel.open(lockFile, StandardOpenOption.WRITE)) {
+            // The lock is released when the channel closes, just before the folder is deleted.
+            return channel.tryLock() != null;
+        } catch (OverlappingFileLockException e) {
+            return false; // held by this JVM
         }
     }
 
