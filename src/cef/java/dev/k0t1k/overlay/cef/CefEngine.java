@@ -9,7 +9,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiFunction;
+import java.util.function.Predicate;
 
 import org.cef.CefApp;
 import org.cef.CefClient;
@@ -24,6 +27,11 @@ import org.cef.handler.CefContextMenuHandlerAdapter;
 import org.cef.handler.CefDisplayHandlerAdapter;
 import org.cef.handler.CefLifeSpanHandlerAdapter;
 import org.cef.handler.CefLoadHandlerAdapter;
+import org.cef.handler.CefRequestHandlerAdapter;
+import org.cef.handler.CefResourceRequestHandler;
+import org.cef.handler.CefResourceRequestHandlerAdapter;
+import org.cef.misc.BoolRef;
+import org.cef.network.CefRequest;
 import org.cef.network.CefCookie;
 import org.cef.network.CefCookieManager;
 
@@ -66,14 +74,21 @@ public final class CefEngine implements BrowserEngine {
     private volatile boolean loading;
     private volatile boolean fullscreen;
     private volatile boolean playing;
+    private final AtomicInteger blocked = new AtomicInteger();
+    private final BiFunction<String, Boolean, String> scripts;
+    private boolean scriptFailed;
     /** Guarded by this: the browser exists natively, and a close was asked for. */
     private boolean created;
     private boolean closeRequested;
     private boolean visible = true;
 
-    private CefEngine(CefClient client, String start) {
+    private CefEngine(CefClient client, String start, Predicate<String[]> blocker, BiFunction<String, Boolean, String> scripts) {
         this.client = client;
         this.url = start;
+        this.scripts = scripts;
+        if (blocker != null) {
+            addBlocker(blocker);
+        }
         client.addLifeSpanHandler(new CefLifeSpanHandlerAdapter() {
             @Override
             public void onAfterCreated(CefBrowser b) {
@@ -92,6 +107,7 @@ public final class CefEngine implements BrowserEngine {
             public void onAddressChange(CefBrowser b, CefFrame frame, String address) {
                 if (frame == null || frame.isMain()) {
                     url = address;
+                    inject(frame, false);
                 }
             }
 
@@ -126,7 +142,16 @@ public final class CefEngine implements BrowserEngine {
             }
 
             @Override
+            public void onLoadStart(CefBrowser b, CefFrame frame, CefRequest.TransitionType transitionType) {
+                if (frame != null && frame.isMain()) {
+                    blocked.set(0);
+                    inject(frame, true);
+                }
+            }
+
+            @Override
             public void onLoadEnd(CefBrowser b, CefFrame frame, int httpStatusCode) {
+                inject(frame, false);
                 if (frame != null) {
                     frame.executeJavaScript(PAGE_SCRIPT, frame.getURL(), 0);
                 }
@@ -150,6 +175,70 @@ public final class CefEngine implements BrowserEngine {
         browser.createImmediately();
     }
 
+    /**
+     * Cancels the requests the overlay's filters name. This runs on Chromium's network thread for every
+     * request, so it only asks the (lock-free) predicate; a page's own main document is never cancelled.
+     */
+    private void addBlocker(Predicate<String[]> blocker) {
+        CefResourceRequestHandler handler = new CefResourceRequestHandlerAdapter() {
+            private boolean failed;
+
+            @Override
+            public boolean onBeforeResourceLoad(CefBrowser b, CefFrame frame, CefRequest request) {
+                try {
+                    CefRequest.ResourceType type = request.getResourceType();
+                    if (type == CefRequest.ResourceType.RT_MAIN_FRAME) {
+                        return false;
+                    }
+                    String page = request.getFirstPartyForCookies();
+                    if (page == null || page.isEmpty()) {
+                        page = request.getReferrerURL();
+                    }
+                    if (blocker.test(new String[] {request.getURL(), type.name(), nonNull(page)})) {
+                        blocked.incrementAndGet();
+                        return true;
+                    }
+                } catch (RuntimeException e) {
+                    if (!failed) {
+                        failed = true;
+                        System.err.println("[k0t1k-overlay] request filter failed: " + e);
+                    }
+                }
+                return false;
+            }
+        };
+        client.addRequestHandler(new CefRequestHandlerAdapter() {
+            @Override
+            public CefResourceRequestHandler getResourceRequestHandler(CefBrowser b, CefFrame frame, CefRequest request,
+                    boolean isNavigation, boolean isDownload, String requestInitiator, BoolRef disableDefaultHandling) {
+                return handler;
+            }
+        });
+    }
+
+    /** Runs the overlay's protection script in a page; see {@code Protection.scripts}. */
+    private void inject(CefFrame frame, boolean full) {
+        if (scripts == null || frame == null || !frame.isMain()) {
+            return;
+        }
+        try {
+            String js = scripts.apply(frame.getURL(), full);
+            if (!js.isEmpty()) {
+                frame.executeJavaScript(js, frame.getURL(), 0);
+            }
+        } catch (RuntimeException e) {
+            if (!scriptFailed) {
+                scriptFailed = true;
+                System.err.println("[k0t1k-overlay] page protection failed: " + e);
+            }
+        }
+    }
+
+    @Override
+    public int blocked() {
+        return blocked.get();
+    }
+
     private static String nonNull(String value) {
         return value == null ? "" : value;
     }
@@ -158,11 +247,12 @@ public final class CefEngine implements BrowserEngine {
      * Starts CEF from the natives in {@code dir} (once per JVM) and opens a browser at {@code start}.
      * {@code cache} keeps cookies and logins between games. Called reflectively by the overlay.
      */
-    public static synchronized BrowserEngine create(File dir, File cache, String language, String start) {
+    public static synchronized BrowserEngine create(File dir, File cache, String language, String start,
+            Predicate<String[]> blocker, BiFunction<String, Boolean, String> scripts) {
         if (app == null) {
             app = start(dir, cache, language);
         }
-        return new CefEngine(app.createClient(), start);
+        return new CefEngine(app.createClient(), start, blocker, scripts);
     }
 
     private static CefApp start(File dir, File cache, String language) {

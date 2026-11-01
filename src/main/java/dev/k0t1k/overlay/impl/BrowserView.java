@@ -74,6 +74,7 @@ final class BrowserView {
     }
 
     private final Browser browser;
+    private final Protection protection;
     private final Strings strings;
     private final Overlay overlay;
     private final Options options;
@@ -111,8 +112,9 @@ final class BrowserView {
     private long sessionCheck;
     private long zoomShownUntil;
 
-    BrowserView(Browser browser, Strings strings, Overlay overlay, Executor io) {
+    BrowserView(Browser browser, Strings strings, Overlay overlay, Executor io, Protection protection) {
         this.browser = browser;
+        this.protection = protection;
         this.strings = strings;
         this.overlay = overlay;
         this.options = overlay.options();
@@ -134,6 +136,7 @@ final class BrowserView {
     // ---- drawing ----
 
     synchronized void draw(Ui ui, float x, float y, float w, float h) {
+        shieldInput(ui, tabs.get(active));
         menuInput(ui);
         Tab tab = tabs.get(active);
         boolean ready = browser.state == Browser.State.READY && overlay.imagesSupported();
@@ -176,16 +179,20 @@ final class BrowserView {
         } else {
             ui.panel(x, py, w, ph, 10, Ui.BASE, Ui.LINE);
         }
-        if (engine == null || browser.state != Browser.State.READY) {
+        if (browser.state == Browser.State.UNSUPPORTED) {
             drawSetup(ui, tab, x, py, w, ph);
         } else if (!overlay.imagesSupported()) {
+            // Nothing to offer here, not even the download: the page could not be drawn.
             center(ui, x, py, w, ph, strings.get("browser.unsupportedRenderer"), Ui.FAINT);
+        } else if (engine == null || browser.state != Browser.State.READY) {
+            drawSetup(ui, tab, x, py, w, ph);
         } else {
             float inset = full ? 0 : 1;
             drawPage(ui, tab, engine, x + inset, py + inset, w - inset * 2, ph - inset * 2);
         }
         saveSession(false);
         drawMenu(ui, x, y, w, h);
+        drawShield(ui, tab, engine);
     }
 
     private void drawPage(Ui ui, Tab tab, BrowserEngine engine, float vx, float vy, float vw, float vh) {
@@ -547,6 +554,20 @@ final class BrowserView {
             }
             zoomW += 4;
         }
+        boolean web = url.startsWith("http://") || url.startsWith("https://");
+        if (web) {
+            String label = strings.format("browser.shield", engine == null ? 0 : engine.blocked());
+            float sw = ui.measure(ui.bold, 13, label) + 20;
+            shieldX = starX - zoomW - 4 - sw;
+            if (ui.pill(shieldX, y + 4, sw, TOOL_H - 8, label, shieldOpen)) {
+                shieldOpen = true;
+            }
+            shieldX = Math.min(shieldX, right - SHIELD_W);
+            shieldY = y + TOOL_H + 2;
+            zoomW += sw + 4;
+        } else {
+            shieldOpen = false;
+        }
         boolean marked = data.indexOf(url) >= 0;
         if (ui.button(starX, y, TOOL_H, TOOL_H, marked ? "★" : "☆", marked)) {
             toggleBookmark(tab);
@@ -556,6 +577,76 @@ final class BrowserView {
         if (ui.focus == address && pressed(ui, Keys.ENTER, Keys.KP_ENTER)) {
             open(target(address.value()));
             ui.focus = pageFocus;
+        }
+    }
+
+    // ---- site shield ----
+
+    private static final float SHIELD_W = 310;
+    private static final float SHIELD_ROW = 28;
+    private static final int[] SHIELD_FEATURES = {Protection.ADS, Protection.COOKIES, Protection.DARK};
+    private static final String[] SHIELD_LABELS = {"browser.shieldAds", "browser.shieldCookies", "browser.shieldDark"};
+    private boolean shieldOpen;
+    private float shieldX;
+    private float shieldY;
+
+    /** The popover's clicks, taken before the rest of the view sees them: a switch, or a click outside closes it. */
+    private void shieldInput(Ui ui, Tab tab) {
+        if (!shieldOpen) {
+            return;
+        }
+        for (Iterator<int[]> it = ui.keys.iterator(); it.hasNext(); ) {
+            if (it.next()[0] == Keys.ESCAPE) {
+                it.remove();
+                shieldOpen = false;
+                return;
+            }
+        }
+        if (!(ui.clicked || ui.rightClicked || ui.middleClicked)) {
+            return;
+        }
+        float height = 16 + (SHIELD_FEATURES.length + 1) * SHIELD_ROW;
+        boolean inside = ui.hover(shieldX, shieldY, SHIELD_W, height);
+        if (inside && ui.clicked) {
+            for (int i = 0; i < SHIELD_FEATURES.length; i++) {
+                if (ui.hover(shieldX + 8, shieldY + 8 + i * SHIELD_ROW, SHIELD_W - 16, SHIELD_ROW)) {
+                    protection.toggleSite(NetFilter.host(tab.url()), SHIELD_FEATURES[i]);
+                    // The page is prepared while it loads, so a change shows after a reload.
+                    if (tab.engine != null) {
+                        tab.engine.reload();
+                    }
+                }
+            }
+        }
+        if (!inside) {
+            shieldOpen = false;
+        }
+        ui.clicked = false;
+        ui.rightClicked = false;
+        ui.middleClicked = false;
+    }
+
+    private void drawShield(Ui ui, Tab tab, BrowserEngine engine) {
+        if (!shieldOpen) {
+            return;
+        }
+        String site = NetFilter.host(tab.url());
+        float height = 16 + (SHIELD_FEATURES.length + 1) * SHIELD_ROW;
+        ui.panel(shieldX, shieldY, SHIELD_W, height, 8, Ui.SURFACE, Ui.LINE);
+        for (int i = 0; i < SHIELD_FEATURES.length; i++) {
+            ui.checkbox(shieldX + 14, shieldY + 8 + i * SHIELD_ROW + 6, strings.get(SHIELD_LABELS[i]),
+                    protection.siteOn(site, SHIELD_FEATURES[i]));
+        }
+        float ty = shieldY + 8 + SHIELD_FEATURES.length * SHIELD_ROW + 6;
+        ui.textFit(ui.regular, 12, shieldX + 14, ty, SHIELD_W - 28, Ui.FAINT,
+                strings.format("browser.shieldBlocked", engine == null ? 0 : engine.blocked(), site));
+    }
+
+    /** A web address the game opened: a new tab of its own, selected; at the tab limit the current tab is used. */
+    synchronized void openExternal(String url) {
+        Tab t = addTab(url, tabs.size(), true);
+        if (t == null) {
+            open(url);
         }
     }
 

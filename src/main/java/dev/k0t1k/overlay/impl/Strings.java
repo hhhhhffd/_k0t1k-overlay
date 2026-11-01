@@ -215,6 +215,26 @@ final class Strings {
         add("browser.back", "Back", "Назад");
         add("browser.forward", "Forward", "Вперёд");
         add("browser.reload", "Reload", "Обновить");
+        add("browser.shield", "Shield %d", "Щит %d");
+        add("browser.shieldAds", "Block ads and trackers on this site", "Блокировать рекламу и трекеры на этом сайте");
+        add("browser.shieldCookies", "Hide cookie notices on this site", "Скрывать уведомления о куки на этом сайте");
+        add("browser.shieldDark", "Dark mode on this site", "Тёмная тема на этом сайте");
+        add("browser.shieldBlocked", "Blocked on this page: %d (%s)", "Заблокировано на странице: %d (%s)");
+        add("settings.protection", "Protection", "Защита");
+        add("settings.protectBlock", "Block ads and trackers", "Блокировать рекламу и трекеры");
+        add("settings.protectCosmetic", "Hide ads and page clutter", "Скрывать рекламные блоки на страницах");
+        add("settings.protectCookies", "Hide cookie notices", "Скрывать уведомления о куки");
+        add("settings.protectYoutube", "Skip YouTube ads (best effort)", "Пропускать рекламу на YouTube (по мере сил)");
+        add("settings.protectDark", "Dark mode for pages", "Тёмная тема для страниц");
+        add("settings.protectHint", "Built in, since Chrome extensions cannot run here. Lists update weekly; the shield button turns it off per site.",
+                "Встроено: расширения Chrome здесь не работают. Списки обновляются раз в неделю; кнопка щита отключает защиту для сайта.");
+        add("settings.protectList", "%s: %d network, %d page, %d scripts, %s", "%s: сетевых %d, страничных %d, скриптов %d, %s");
+        add("settings.protectMissing", "not downloaded", "не скачан");
+        add("settings.protectUpdate", "Update lists now", "Обновить списки сейчас");
+        add("settings.protectUpdating", "Updating…", "Обновляю…");
+        add("settings.browserLinks", "Open links from the game in", "Открывать ссылки из игры в");
+        add("settings.linksOverlay", "Overlay browser", "Браузере оверлея");
+        add("settings.linksSystem", "System browser", "Системном браузере");
         add("settings.browser", "Browser", "Браузер");
         add("settings.browserHome", "Home page", "Домашняя страница");
         add("settings.browserSearch", "Search engine", "Поисковик");
