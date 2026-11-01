@@ -118,6 +118,8 @@ final class Protection {
     private final Path dir;
     private final Path sitesFile;
     private final Executor io;
+    /** Runs the list updates, which can take long; their rules replace the snapshot when ready. */
+    private final Executor updater;
     private final java.util.function.Consumer<Throwable> onError;
     private volatile Snapshot snapshot;
     private volatile String darkReader;
@@ -126,11 +128,12 @@ final class Protection {
     private volatile boolean updating;
     private boolean started;
 
-    Protection(Options options, Path dataDir, Executor io, java.util.function.Consumer<Throwable> onError) {
+    Protection(Options options, Path dataDir, Executor io, Executor updater, java.util.function.Consumer<Throwable> onError) {
         this.options = options;
         this.dir = dataDir.resolve("browser").resolve("filters");
         this.sitesFile = dataDir.resolve("browser").resolve("sites.tsv");
         this.io = io;
+        this.updater = updater;
         this.onError = onError;
     }
 
@@ -140,14 +143,14 @@ final class Protection {
             return;
         }
         started = true;
-        io.execute(() -> run(false));
+        updater.execute(() -> run(false));
     }
 
     /** The "Update lists now" button. */
     synchronized void updateNow() {
         if (!updating) {
             updating = true;
-            io.execute(() -> run(true));
+            updater.execute(() -> run(true));
         }
     }
 

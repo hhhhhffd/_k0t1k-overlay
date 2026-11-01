@@ -46,6 +46,8 @@ public final class Overlay implements Function<Object[], Object> {
     private final ScheduledExecutorService ioThread = Executors.newSingleThreadScheduledExecutor(daemon("io"));
     /** Recording work (starting ffmpeg, downloading it, saving) takes long enough to keep off the io thread. */
     private final ScheduledExecutorService recordThread = Executors.newSingleThreadScheduledExecutor(daemon("record"));
+    /** Filter list downloads wait on network timeouts, so they must not queue ahead of the browser and the other io work. */
+    private final ExecutorService protectionThread = Executors.newSingleThreadExecutor(daemon("protection"));
     private final ExecutorService searchThread = Executors.newSingleThreadExecutor(daemon("search"));
     /** {@link #ioThread} with failures reported instead of dropped inside a future. */
     private final Executor io = task -> ioThread.execute(() -> {
@@ -180,7 +182,7 @@ public final class Overlay implements Function<Object[], Object> {
         ffmpeg = new Ffmpeg(options, recordThread);
         recorder = new Recorder(options, ffmpeg, recordThread, render,
                 (title, body) -> render.execute(() -> toast(title, body)), this::report);
-        protection = new Protection(options, options.dataDir, io, this::report);
+        protection = new Protection(options, options.dataDir, io, protectionThread, this::report);
         browser = new Browser(options.dataDir, io, options.lang, protection);
         browserView = new BrowserView(browser, strings, this, io, protection);
         crashGuard = new CrashGuard(options.dataDir);
@@ -293,13 +295,25 @@ public final class Overlay implements Function<Object[], Object> {
 
     /** Set between the enter and exit hooks of a skipped SDL_OpenURL, so the game is told it worked. */
     private final ThreadLocal<Boolean> sdlOpened = new ThreadLocal<>();
+    /** Set between the enter and exit hooks of a redirected ProcessBuilder.start: the builder and its original command. */
+    private final ThreadLocal<Object[]> startedBuilder = new ThreadLocal<>();
 
     /**
      * ProcessBuilder.start, Desktop.browse and SDL_OpenURL: when the game opens a web address and the
      * player wants those in the overlay, the launch is made harmless and the address is opened in a tab.
      * Never touches the overlay's own launches ({@link Links#OWN}) or anything that is not a web address.
      */
+    @SuppressWarnings("unchecked") // the saved command is the List<String> stored by the same method
     private Object openedLink(String method, Object[] args, boolean exit) {
+        if (exit && method.equals("start")) {
+            // The caller may reuse its builder; give it back the command that was swapped out.
+            Object[] saved = startedBuilder.get();
+            startedBuilder.remove();
+            if (saved != null && saved[0] == args[0]) {
+                ((ProcessBuilder) saved[0]).command((List<String>) saved[1]);
+            }
+            return null;
+        }
         if (exit) {
             Boolean opened = sdlOpened.get();
             sdlOpened.remove();
@@ -313,6 +327,7 @@ public final class Overlay implements Function<Object[], Object> {
             case "start":
                 url = Links.openedAddress(((ProcessBuilder) args[0]).command());
                 if (url != null) {
+                    startedBuilder.set(new Object[] {args[0], new ArrayList<>(((ProcessBuilder) args[0]).command())});
                     ((ProcessBuilder) args[0]).command(Links.harmless());
                 }
                 break;

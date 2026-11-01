@@ -124,7 +124,8 @@ public final class Agent {
                         .visit(Advice.to(Exit.class).on(HARDWARE_EXIT)))
                 .type(named("java.lang.ProcessBuilder"))
                 .transform((builder, type, loader, module, domain) -> builder
-                        .visit(Advice.to(EnterThis.class).on(named("start").and(takesArguments(0)))))
+                        .visit(Advice.to(EnterThis.class).on(named("start").and(takesArguments(0))))
+                        .visit(Advice.to(ExitThis.class).on(named("start").and(takesArguments(0)))))
                 .type(named("java.awt.Desktop"))
                 .transform((builder, type, loader, module, domain) -> builder
                         .visit(Advice.to(Enter.class).on(named("browse"))))
@@ -166,6 +167,21 @@ public final class Agent {
             Object hook = System.getProperties().get(CALL);
             if (hook != null) {
                 ((Function<Object[], Object>) hook).apply(new Object[] {type, method, new Object[] {self}});
+            }
+        }
+    }
+
+    /** Calls the overlay after an instance method that takes no arguments, even when it threw, with the instance as the only argument. */
+    static final class ExitThis {
+        @Advice.OnMethodExit(onThrowable = Throwable.class, suppress = Throwable.class)
+        @SuppressWarnings("unchecked")
+        static void exit(
+                @Advice.Origin Class<?> type,
+                @Advice.Origin("#m") String method,
+                @Advice.This Object self) {
+            Object hook = System.getProperties().get(CALL);
+            if (hook != null) {
+                ((Function<Object[], Object>) hook).apply(new Object[] {type, method, new Object[] {self}, null});
             }
         }
     }
