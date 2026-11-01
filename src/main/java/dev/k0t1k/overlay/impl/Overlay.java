@@ -26,7 +26,7 @@ import org.lwjgl.opengl.GL11;
  */
 public final class Overlay implements Function<Object[], Object> {
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm");
-    private static final String[] TABS = {"tab.chat", "tab.browser", "tab.notes", "tab.tools", "tab.mods", "tab.profile", "tab.perf"};
+    private static final String[] TABS = {"tab.chat", "tab.browser", "tab.notes", "tab.tools", "tab.mods", "tab.profile", "tab.perf", "tab.settings"};
     /** No input for this long while playing counts as AFK, and the cat says so. */
     private static final long AFK = 5 * 60_000;
     /** How often the lifetime stats are written. */
@@ -67,6 +67,7 @@ public final class Overlay implements Function<Object[], Object> {
     private final ToolsView toolsView;
     private final ModsView modsView;
     private final ProfileView profileView;
+    private final SettingsView settingsView;
     private Cat cat;
     private final Media media;
     private final Replay replay;
@@ -133,7 +134,7 @@ public final class Overlay implements Function<Object[], Object> {
         Runnable saveSettings = () -> io.execute(options.saveTask());
         chatView = new ChatView(chat, strings, this);
         notesView = new NotesView(notes, strings);
-        perfView = new PerfView(perf, options, saveSettings);
+        perfView = new PerfView(perf, options);
         Path gameDir = options.gameDir;
         Path parent = gameDir.getParent();
         instance = "minecraft".equals(String.valueOf(gameDir.getFileName())) && parent != null
@@ -153,7 +154,8 @@ public final class Overlay implements Function<Object[], Object> {
         mods = new Mods(options.gameDir, io, render, this::report);
         toolsView = new ToolsView(strings, this, game, timers, screenshots);
         modsView = new ModsView(mods, strings, this);
-        profileView = new ProfileView(stats, options, saveSettings);
+        profileView = new ProfileView(stats, strings);
+        settingsView = new SettingsView(options, saveSettings);
         media = new Media(ioThread, render, this::report);
         media.onTrack = track -> {
             if (!open) {
@@ -881,8 +883,11 @@ public final class Overlay implements Function<Object[], Object> {
             case 5:
                 profileView.draw(ui, x, y, innerW, innerH);
                 break;
-            default:
+            case 6:
                 perfView.draw(ui, x, y, innerW, innerH);
+                break;
+            default:
+                settingsView.draw(ui, x, y, innerW, innerH);
                 break;
         }
 

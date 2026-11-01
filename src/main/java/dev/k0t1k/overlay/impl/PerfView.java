@@ -5,16 +5,14 @@ final class PerfView {
     private final Perf perf;
     private final Options options;
     private final Strings strings;
-    private final Runnable saveSettings;
     /** GL renderer and version, read once by the overlay on the render thread. */
     String renderer = "";
     private final String system;
 
-    PerfView(Perf perf, Options options, Runnable saveSettings) {
+    PerfView(Perf perf, Options options) {
         this.perf = perf;
         this.options = options;
         this.strings = options.strings;
-        this.saveSettings = saveSettings;
         system = "Java " + System.getProperty("java.version") + " · " + System.getProperty("os.name") + " "
                 + System.getProperty("os.arch") + " · " + Runtime.getRuntime().availableProcessors() + " CPU";
     }
@@ -46,31 +44,15 @@ final class PerfView {
                 perf.cpu < 0 ? "—" : Math.round(perf.cpu * 100) + "%", Ui.FG, strings.format("perf.threads", perf.threads));
 
         float gy = y + cardH + gap;
-        float gh = h - cardH - gap - 90;
+        float gh = h - cardH - gap * 2 - 38;
         ui.panel(x, gy, w, gh, 10, Ui.BASE, Ui.LINE);
         int frames = Math.min(perf.count, 300);
         ui.text(ui.bold, 12, x + 14, gy + 10, Ui.MUTED, strings.format("perf.graph", frames));
         graph(ui, x + 14, gy + 32, w - 28, gh - 46, frames, true);
 
         float sy = gy + gh + gap;
-        boolean hud = ui.checkbox(x, sy + 4, strings.get("perf.hud"), options.hud);
-        if (hud != options.hud) {
-            options.hud = hud;
-            saveSettings.run();
-        }
-        String corner = strings.get("perf.corner");
-        float cx = x + 300;
-        ui.text(ui.regular, 13, cx, sy + 5, Ui.MUTED, corner);
-        cx += ui.measure(ui.regular, 13, corner) + 10;
-        String[] arrows = {"↖", "↗", "↙", "↘"};
-        for (int i = 0; i < 4; i++) {
-            if (ui.pill(cx + i * 34, sy, 30, 26, arrows[i], options.hudCorner == i) && options.hudCorner != i) {
-                options.hudCorner = i;
-                saveSettings.run();
-            }
-        }
-        ui.textFit(ui.regular, 12, x, sy + 40, w, Ui.FAINT, strings.get("perf.system") + ": " + system);
-        ui.textFit(ui.regular, 12, x, sy + 58, w, Ui.FAINT, renderer);
+        ui.textFit(ui.regular, 12, x, sy, w, Ui.FAINT, strings.get("perf.system") + ": " + system);
+        ui.textFit(ui.regular, 12, x, sy + 18, w, Ui.FAINT, renderer);
     }
 
     private static void card(Ui ui, float x, float y, float w, float h, String label, String value, int color, String sub) {

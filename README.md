@@ -46,12 +46,13 @@ Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it
 | **Tools** | Overworld ↔ Nether coordinates (with "my position"), stacks and shulker boxes, timers and alarms that survive a restart, the latest screenshots. Each F2 screenshot shows a toast with the instance and position. |
 | **Mods** | The instance's mods with a search and what each one does (from the mod's metadata), with links to Modrinth and the mod's homepage. |
 | **Profile** | Lifetime stats (play time, sessions, deaths, advancements, screenshots, crashes) and the launcher's achievements on top of them. |
-| **Performance** | FPS, frame time, 1% low, a frame time graph, heap, GC and the game's CPU load, plus an optional HUD in a corner of the screen. |
+| **Performance** | FPS, frame time, 1% low, a frame time graph, heap, GC and the game's CPU load, plus an optional HUD in a corner of the screen (turned on in Settings). |
 | **Browser** | A real Chromium (JCEF, off-screen rendering) in its own tab: back, forward, reload, an address bar that also searches, quick links (Minecraft Wiki, Modrinth, CurseForge, YouTube). |
 | **Replay** | The last 30 seconds kept in memory; **Shift+F2** or the button in Tools saves them as a GIF or a video. |
 | **Music** | What the system plays (Spotify, a browser tab, any player) with previous, play/pause and next, and a toast when a new track starts. |
 | **Crash window** | After a crash, shows the reason and the report and uploads them to mclo.gs only when the player clicks "Send to support". |
-| **Cat** | The launcher's cat sits in a corner and reacts to deaths, advancements, a five minute AFK, timers, screenshots and achievements with a speech bubble (can be turned off in Profile). |
+| **Settings** | Overlay settings in sections: the HUD and its corner, the cat, the replay buffer. |
+| **Cat** | The launcher's cat sits in a corner and reacts to deaths, advancements, a five minute AFK, timers, screenshots and achievements with a speech bubble (can be turned off in Settings). |
 
 The player's position, dimension and health are read by reflection on `net.minecraft` classes, so they
 only work where the game runs with Mojang names: Minecraft 26.1+ and NeoForge. Elsewhere the position

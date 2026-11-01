@@ -11,6 +11,10 @@ final class Strings {
     Strings(String lang) {
         russian = lang.toLowerCase(java.util.Locale.ROOT).startsWith("ru");
         add("tab.chat", "Chat", "Чат");
+        add("tab.settings", "Settings", "Настройки");
+        add("settings.hud", "HUD", "HUD");
+        add("settings.cat", "Cat", "Кот");
+        add("settings.replay", "Replay", "Повтор");
         add("tab.notes", "Notes", "Заметки");
         add("tab.perf", "Performance", "Производительность");
         add("hint.close", "Shift+Tab to close", "Shift+Tab — закрыть");

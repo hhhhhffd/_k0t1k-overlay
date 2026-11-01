@@ -262,25 +262,10 @@ final class ToolsView {
 
     // ---- screenshots ----
 
-    /** The replay buffer row: on/off, format, save. Returns the y below it. */
+    /** The replay row: the save button and what state the buffer is in (the toggles are in Settings). Returns the y below it. */
     private float replay(Ui ui, float x, float y, float w) {
         Options options = overlay.options();
-        boolean on = ui.checkbox(x, y + 6, strings.get("replay.toggle"), options.replay);
-        if (on != options.replay) {
-            options.replay = on;
-            overlay.saveSettings();
-        }
-        float fx = x + ui.measure(ui.regular, 13, strings.get("replay.toggle")) + 40;
-        String[] formats = {"video", "gif"};
-        for (String format : formats) {
-            String label = strings.get("replay." + format);
-            float pw = ui.measure(ui.bold, 13, label) + 20;
-            if (ui.pill(fx, y + 1, pw, 26, label, format.equals(options.replayFormat))) {
-                options.replayFormat = format;
-                overlay.saveSettings();
-            }
-            fx += pw + 4;
-        }
+        ui.text(ui.bold, 13, x, y + 6, Ui.FG, strings.get("replay.title"));
         String save = strings.get("replay.save");
         float sw = ui.buttonWidth(save);
         if (ui.button(x + w - sw, y, sw, 28, save, overlay.replayAvailable())) {

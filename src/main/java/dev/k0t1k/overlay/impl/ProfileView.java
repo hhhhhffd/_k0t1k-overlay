@@ -3,16 +3,12 @@ package dev.k0t1k.overlay.impl;
 /** The profile tab: lifetime stats across every game with the overlay, and the launcher's achievements. */
 final class ProfileView {
     private final Stats stats;
-    private final Options options;
     private final Strings strings;
-    private final Runnable saveSettings;
     private float scroll;
 
-    ProfileView(Stats stats, Options options, Runnable saveSettings) {
+    ProfileView(Stats stats, Strings strings) {
         this.stats = stats;
-        this.options = options;
-        this.strings = options.strings;
-        this.saveSettings = saveSettings;
+        this.strings = strings;
     }
 
     void draw(Ui ui, float x, float y, float w, float h) {
@@ -31,11 +27,6 @@ final class ProfileView {
 
         float ay = y + cardH + gap + 4;
         ui.text(ui.bold, 14, x, ay, Ui.FG, strings.format("ach.title", stats.unlocked.size(), Stats.ACHIEVEMENTS.length));
-        boolean cat = ui.checkbox(x + w - 16 - ui.measure(ui.regular, 13, strings.get("cat.toggle")) - 24, ay, strings.get("cat.toggle"), options.cat);
-        if (cat != options.cat) {
-            options.cat = cat;
-            saveSettings.run();
-        }
         ay += 30;
         int columns = w > 640 ? 3 : 2;
         float tileW = (w - gap * (columns - 1)) / columns;
