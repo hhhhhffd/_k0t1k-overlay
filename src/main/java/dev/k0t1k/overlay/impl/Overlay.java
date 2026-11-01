@@ -129,6 +129,8 @@ public final class Overlay implements Function<Object[], Object> {
         /** Set while the pointer is over it, so the time left stops running down. */
         boolean hovered;
         boolean dismissed;
+        /** Where it was drawn last frame, {x, y, w, h}, or null; clicks are matched against it first. */
+        float[] box;
 
         Toast(String title, String body, long until) {
             this.title = title;
@@ -1107,6 +1109,18 @@ public final class Overlay implements Function<Object[], Object> {
     }
 
     private void draw(float w, float h) {
+        // Toasts are drawn on top but after the tabs' widgets, so a click on one is taken here, before
+        // anything underneath could react to it.
+        if (open && ui.clicked) {
+            for (Toast toast : toasts) {
+                float[] b = toast.box;
+                if (b != null && ui.mouseX >= b[0] && ui.mouseX < b[0] + b[2] && ui.mouseY >= b[1] && ui.mouseY < b[1] + b[3]) {
+                    toast.dismissed = true;
+                    ui.clicked = false;
+                    break;
+                }
+            }
+        }
         if (open && hudEditing) {
             if (perfView.edit(ui, w, h)) {
                 endHudEdit();
@@ -1372,10 +1386,8 @@ public final class Overlay implements Function<Object[], Object> {
             // Pointer interaction only exists while the overlay is open.
             if (open && ui.hover(x, ty, tw, th)) {
                 toast.hovered = true;
-                if (ui.clickedIn(x, ty, tw, th)) {
-                    toast.dismissed = true;
-                }
             }
+            toast.box = new float[] {x, ty, tw, th};
             ui.panel(x, ty, tw, th, 10, 0xf21b1728, 0xff3a3256);
             ui.round(x + 1, ty + 10, 3, th - 20, 1.5f, Ui.ACCENT);
             ui.text(ui.bold, 13, x + 14, ty + 10, Ui.FG, toast.title);
