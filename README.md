@@ -156,7 +156,7 @@ dispatcher can replace the arguments or skip the call. After the call, it can re
 | `vkQueuePresentKHR` | Vulkan: draws into the swapchain image right before it is presented |
 | `vkCreateSwapchainKHR`, `vkDestroySwapchainKHR`, `vkDestroyDevice`, `vkGetDeviceQueue(2)` | Vulkan: tracks swapchains and queue families, and adds colour attachment usage to swapchains (Minecraft only blits into them), plus transfer source usage where the surface allows it, for the replay buffer |
 | `glfwSet{Key,Char,CharMods,MouseButton,CursorPos,Scroll}Callback` | GLFW: wraps the game's callbacks, so the overlay sees input first and swallows it while open |
-| `SDL_PollEvent` | SDL: the overlay inspects each event and neutralises the ones it takes by rewriting their type to `SDL_EVENT_USER`, which the game ignores |
+| `SDL_PollEvent` | SDL: the overlay inspects each event and neutralises the ones it takes by rewriting their type to `0xffff`, which no SDL event uses and the game ignores |
 | `glfwGetKey`, `glfwGetMouseButton` | GLFW: keys and buttons read as released while the overlay is open |
 | `Display.update(boolean)` | LWJGL 2: draws before the buffers are swapped (`update()` only calls it, and `processMessages` runs after the swap) |
 | `Keyboard.next`, `Mouse.next` | LWJGL 2: after the game reads an event, the overlay looks at it and, if it takes it, reads the next one in its place |

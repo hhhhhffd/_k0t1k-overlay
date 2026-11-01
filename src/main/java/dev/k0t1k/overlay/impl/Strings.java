@@ -42,8 +42,8 @@ final class Strings {
         add("hw.gpu", "GPU name", "Видеокарта");
         add("hw.vendor", "GPU vendor", "Производитель GPU");
         add("hw.memory", "Max memory, MiB", "Макс. память, МиБ");
-        add("hw.hint", "Only the F3 screen changes; the game and crash reports keep the real hardware. Memory applies on Minecraft 26.x only.",
-                "Меняется только экран F3; игра и отчёты о сбоях видят настоящее железо. Память работает только на Minecraft 26.x.");
+        add("hw.hint", "Only the F3 screen changes; the game and crash reports keep the real hardware. Memory applies on Minecraft 26.x only; the CPU is not faked on 1.8 to 1.12.",
+                "Меняется только экран F3; игра и отчёты о сбоях видят настоящее железо. Память работает только на Minecraft 26.x; процессор на 1.8-1.12 не подменяется.");
         add("tab.notes", "Notes", "Заметки");
         add("tab.perf", "Performance", "Производительность");
         add("hint.close", "Shift+Tab to close", "Shift+Tab — закрыть");

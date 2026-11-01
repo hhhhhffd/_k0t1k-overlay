@@ -28,7 +28,7 @@ import static org.lwjgl.sdl.SDLVideo.SDL_GetWindowSizeInPixels;
 /**
  * SDL3 backend (Minecraft 26.3+). The game drains events with {@code SDL_PollEvent}; after each one
  * returns, the overlay looks at the event and, when it takes it, rewrites its type to
- * {@code SDL_EVENT_USER}, which the game ignores. Cursor and text input calls the game makes while the
+ * 0xffff ({@code SDL_EVENT_LAST}), which the game ignores. Cursor and text input calls the game makes while the
  * overlay is open are held back and applied when it closes.
  */
 final class SdlPlatform implements SdlBackend {
@@ -168,56 +168,70 @@ final class SdlPlatform implements SdlBackend {
         return null;
     }
 
-    /** SDL scancode (USB HID usage) to the overlay's key codes, which are GLFW's. */
+    /** Punctuation by USB HID usage 44..56 (space - = [ ] backslash non-US-# ; ' ` , . /), as GLFW codes. */
+    private static final int[] PUNCTUATION = {32, 45, 61, 91, 93, 92, 92, 59, 39, 96, 44, 46, 47};
+
+    /** SDL scancode (USB HID usage) to the overlay's key codes, which are GLFW's. Both are positional. */
     private static int keyCode(int scancode) {
         if (scancode >= 4 && scancode <= 29) {
             return Keys.A + scancode - 4;
         }
+        if (scancode >= 30 && scancode <= 38) {
+            return Keys.ZERO + 1 + scancode - 30;
+        }
+        if (scancode == 39) {
+            return Keys.ZERO;
+        }
+        if (scancode >= 44 && scancode <= 56) {
+            return PUNCTUATION[scancode - 44];
+        }
+        if (scancode >= 58 && scancode <= 69) {
+            return Keys.F1 + scancode - 58;
+        }
+        if (scancode >= 104 && scancode <= 115) {
+            return Keys.F1 + 12 + scancode - 104;
+        }
+        if (scancode >= 89 && scancode <= 97) {
+            return Keys.KP_0 + 1 + scancode - 89;
+        }
+        if (scancode >= 224 && scancode <= 231) {
+            // SDL orders Ctrl, Shift, Alt, GUI per side; GLFW orders Shift, Ctrl, Alt, Super.
+            int index = scancode - 224;
+            int[] order = {1, 0, 2, 3};
+            return Keys.LEFT_SHIFT + index / 4 * 4 + order[index % 4];
+        }
         switch (scancode) {
-            case 40:
-                return Keys.ENTER;
-            case 41:
-                return Keys.ESCAPE;
-            case 42:
-                return Keys.BACKSPACE;
-            case 39:
-                return Keys.ZERO;
-            case 43:
-                return Keys.TAB;
-            case 45:
-                return Keys.MINUS;
-            case 46:
-                return Keys.EQUAL;
-            case 59:
-                return Keys.F2;
-            case 74:
-                return Keys.HOME;
-            case 75:
-                return Keys.PAGE_UP;
-            case 76:
-                return Keys.DELETE;
-            case 77:
-                return Keys.END;
-            case 78:
-                return Keys.PAGE_DOWN;
-            case 79:
-                return Keys.RIGHT;
-            case 80:
-                return Keys.LEFT;
-            case 81:
-                return Keys.DOWN;
-            case 82:
-                return Keys.UP;
-            case 86:
-                return Keys.KP_SUBTRACT;
-            case 87:
-                return Keys.KP_ADD;
-            case 88:
-                return Keys.KP_ENTER;
-            case 98:
-                return Keys.KP_0;
+            case 40: return Keys.ENTER;
+            case 41: return Keys.ESCAPE;
+            case 42: return Keys.BACKSPACE;
+            case 43: return Keys.TAB;
+            case 57: return 280;
+            case 70: return 283;
+            case 71: return 281;
+            case 72: return 284;
+            case 73: return Keys.INSERT;
+            case 74: return Keys.HOME;
+            case 75: return Keys.PAGE_UP;
+            case 76: return Keys.DELETE;
+            case 77: return Keys.END;
+            case 78: return Keys.PAGE_DOWN;
+            case 79: return Keys.RIGHT;
+            case 80: return Keys.LEFT;
+            case 81: return Keys.DOWN;
+            case 82: return Keys.UP;
+            case 83: return 282;
+            case 84: return 331;
+            case 85: return 332;
+            case 86: return Keys.KP_SUBTRACT;
+            case 87: return Keys.KP_ADD;
+            case 88: return Keys.KP_ENTER;
+            case 98: return Keys.KP_0;
+            case 99: return 330;
+            case 100: return 161;
+            case 101: return Keys.MENU;
+            case 103: return 336;
             default:
-                // Keys the overlay has no use for, kept distinct so press/release pairs still match.
+                // Keys with no GLFW counterpart, kept distinct so press/release pairs still match.
                 return 100000 + scancode;
         }
     }

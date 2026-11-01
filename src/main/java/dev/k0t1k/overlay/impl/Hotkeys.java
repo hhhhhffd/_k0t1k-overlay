@@ -6,13 +6,9 @@ package dev.k0t1k.overlay.impl;
  */
 final class Hotkeys {
     private static final int MODS = Keys.MOD_SHIFT | Keys.MOD_CONTROL | Keys.MOD_ALT | Keys.MOD_SUPER;
-    private static final int F1 = 290;
-    private static final int LEFT_SHIFT = 340;
-    private static final int RIGHT_SUPER = 347;
-    private static final int MENU = 348;
 
     static final int OPEN = Keys.MOD_SHIFT << 16 | Keys.TAB;
-    static final int RECORD = Keys.MOD_SHIFT << 16 | (F1 + 9);
+    static final int RECORD = Keys.MOD_SHIFT << 16 | (Keys.F1 + 9);
     static final int SAVE = Keys.MOD_SHIFT << 16 | Keys.F2;
 
     private Hotkeys() {
@@ -28,12 +24,23 @@ final class Hotkeys {
 
     /** Shift, Control, Alt and Super on their own cannot be a combination. */
     static boolean isModifier(int key) {
-        return key >= LEFT_SHIFT && key <= RIGHT_SUPER || key == MENU;
+        return key >= Keys.LEFT_SHIFT && key <= Keys.RIGHT_SUPER || key == Keys.MENU;
     }
 
-    /** Whether a key may be bound with these modifiers: a plain letter or digit would break typing. */
+    /**
+     * Whether a key may be bound with these modifiers. Function keys, navigation keys and the numpad
+     * stand alone; anything else (letters, digits, punctuation) needs a modifier, as a bare one would
+     * break typing. Codes outside the GLFW range, which backends give to unmapped keys, never qualify.
+     */
     static boolean allowed(int key, int mods) {
-        return !isModifier(key) && ((mods & MODS) != 0 || key >= F1);
+        if (isModifier(key)) {
+            return false;
+        }
+        boolean function = key >= Keys.F1 && key <= Keys.F1 + 24;
+        boolean navigation = key == Keys.INSERT || key == Keys.DELETE || key >= Keys.RIGHT && key <= Keys.END;
+        boolean numpad = key >= Keys.KP_0 && key <= Keys.KP_ENTER;
+        boolean known = key >= 32 && key <= 96 || key >= Keys.TAB && key <= Keys.END || function || numpad;
+        return known && (function || navigation || numpad || (mods & MODS) != 0);
     }
 
     static String name(int combo) {
@@ -58,8 +65,8 @@ final class Hotkeys {
     }
 
     private static String keyName(int key) {
-        if (key >= F1 && key <= F1 + 24) {
-            return "F" + (key - F1 + 1);
+        if (key >= Keys.F1 && key <= Keys.F1 + 24) {
+            return "F" + (key - Keys.F1 + 1);
         }
         if (key >= 'A' && key <= 'Z' || key >= '0' && key <= '9') {
             return String.valueOf((char) key);

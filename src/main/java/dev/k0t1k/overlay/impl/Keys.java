@@ -25,11 +25,16 @@ final class Keys {
     static final int PAGE_DOWN = 267;
     static final int HOME = 268;
     static final int END = 269;
+    static final int INSERT = 260;
+    static final int F1 = 290;
     static final int F2 = 291;
     static final int KP_0 = 320;
     static final int KP_SUBTRACT = 333;
     static final int KP_ADD = 334;
     static final int KP_ENTER = 335;
+    static final int LEFT_SHIFT = 340;
+    static final int RIGHT_SUPER = 347;
+    static final int MENU = 348;
 
     static final int MOD_SHIFT = 1;
     static final int MOD_CONTROL = 2;

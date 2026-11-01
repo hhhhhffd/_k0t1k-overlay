@@ -23,9 +23,11 @@ import static java.util.Collections.unmodifiableList;
  *   <li>26.x builds it from {@code DebugEntry*#display(DebugScreenDisplayer, ...)}. The displayer is
  *       replaced by a proxy ({@link F3Lines}) that rewrites the lines on their way to the screen. That
  *       proxy is the one place where a future custom F3 can change or add lines.
- *   <li>1.8 to 1.21.11 read the CPU from {@code GLX._getCpuInfo} and the GPU from
+ *   <li>1.13 to 1.21.11 read the CPU from {@code GLX._getCpuInfo} and the GPU from
  *       {@code glGetString} every frame while F3 is shown. Those return values are replaced, but only
  *       on the render thread while F3 is on screen, which is tracked from the key events.
+ *   <li>1.8 to 1.12 cache the CPU string once in the obfuscated {@code OpenGlHelper}, so the CPU is
+ *       not faked there; the GPU and vendor come from {@code glGetString} as above.
  * </ul>
  * Nothing here touches {@code Runtime}: the game's own memory logic must see the real values.
  */

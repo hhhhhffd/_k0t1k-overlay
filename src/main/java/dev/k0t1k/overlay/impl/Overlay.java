@@ -145,7 +145,6 @@ public final class Overlay implements Function<Object[], Object> {
         }
         chat = new ChatHistory(options.gameDir, options.dataDir, ioThread, searchThread, render, this::report);
         notes = new Notes(options.dataDir, io, render, this::report);
-        Runnable saveSettings = () -> io.execute(options.saveTask());
         chatView = new ChatView(chat, strings, this);
         notesView = new NotesView(notes, strings);
         perfView = new PerfView(perf, options);
@@ -423,6 +422,11 @@ public final class Overlay implements Function<Object[], Object> {
     /** The next key press, with its modifiers, is handed to {@code receiver} as a combination instead of being used. */
     void captureKey(java.util.function.IntConsumer receiver) {
         keyCapture = receiver;
+    }
+
+    /** Drops a pending key capture, e.g. when its row is no longer on screen. */
+    void cancelKeyCapture() {
+        keyCapture = null;
     }
 
     boolean capturingKey() {
@@ -843,6 +847,7 @@ public final class Overlay implements Function<Object[], Object> {
             return;
         }
         ui.resetInput();
+        keyCapture = null;
         if (value) {
             media.start();
             open = true;
@@ -1095,6 +1100,7 @@ public final class Overlay implements Function<Object[], Object> {
             if (tx + tabW > left && tx < right && ui.pill(tx, 9, tabW, 30, label, tab == i)) {
                 tab = i;
                 ui.focus = null;
+                keyCapture = null;
             }
             tx += tabW + 6;
         }

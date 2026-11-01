@@ -91,6 +91,11 @@ final class SettingsView {
         float max = Math.max(0, content - h);
         scroll = Math.max(0, Math.min(scroll, max));
 
+        // A pending hotkey capture belongs to its row; once that scrolls out of view it must not linger.
+        if (overlay.capturingKey() && (tops[HOTKEYS + 1] <= scroll || tops[HOTKEYS] >= scroll + h)) {
+            overlay.cancelKeyCapture();
+        }
+
         ui.rect(x + listW + gap / 2 - 0.5f, y, 1, h, Ui.LINE);
         int current = 0;
         for (int i = 0; i < SECTIONS.length; i++) {

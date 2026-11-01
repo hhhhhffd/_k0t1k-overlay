@@ -248,14 +248,6 @@ final class Options {
         }
     }
 
-    private static int number(Properties saved, String key, int fallback) {
-        try {
-            return Integer.parseInt(saved.getProperty(key, Integer.toString(fallback)));
-        } catch (NumberFormatException e) {
-            return fallback;
-        }
-    }
-
     /** Runs on the io thread; takes a snapshot so the render thread can keep changing the fields. */
     Runnable saveTask() {
         Properties snapshot = new Properties();
