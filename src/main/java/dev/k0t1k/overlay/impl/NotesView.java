@@ -50,7 +50,7 @@ final class NotesView {
             boolean active = note == selected;
             boolean hot = inList && ui.hover(x + 4, iy, listW - 8, itemH - 4);
             if (active || hot) {
-                ui.round(x + 4, iy, listW - 8, itemH - 4, 7, active ? 0x26a259f7 : Ui.RAISED);
+                ui.round(x + 4, iy, listW - 8, itemH - 4, 7, active ? Ui.ACCENT_SOFT : Ui.RAISED);
             }
             if (active) {
                 ui.round(x + 4, iy + 10, 3, itemH - 24, 1.5f, Ui.ACCENT);
@@ -77,7 +77,7 @@ final class NotesView {
         String label = confirmDelete == selected ? strings.get("notes.confirm") : strings.get("notes.delete");
         float bw = ui.buttonWidth(label);
         boolean hotDelete = ui.hover(ex + ew - bw, y, bw, 34);
-        ui.panel(ex + ew - bw, y, bw, 34, 7, hotDelete ? 0x40f87171 : Ui.RAISED, confirmDelete == selected ? Ui.DANGER : Ui.LINE);
+        ui.panel(ex + ew - bw, y, bw, 34, 7, hotDelete ? Ui.DANGER_SOFT : Ui.RAISED, confirmDelete == selected ? Ui.DANGER : Ui.LINE);
         ui.text(ui.bold, 13, ex + ew - bw + 12, y + (34 - ui.lineHeight(ui.bold, 13)) / 2, Ui.DANGER, label);
         if (ui.clickedIn(ex + ew - bw, y, bw, 34)) {
             if (confirmDelete == selected) {

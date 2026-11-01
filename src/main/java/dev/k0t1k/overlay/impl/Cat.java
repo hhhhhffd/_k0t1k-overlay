@@ -154,8 +154,8 @@ final class Cat {
         float lh = ui.lineHeight(ui.regular, 13);
         float h = lines.size() * lh + 16;
         float y = bottom - h;
-        ui.panel(x, y, w, h, 10, 0xf21b1728, 0xffb200ff);
-        ui.round(x + 14, bottom - 2, 8, 8, 2, 0xffb200ff);
+        ui.panel(x, y, w, h, 10, Ui.POPUP, Ui.ACCENT);
+        ui.round(x + 14, bottom - 2, 8, 8, 2, Ui.ACCENT);
         for (int i = 0; i < lines.size(); i++) {
             int[] span = lines.get(i);
             ui.text(ui.regular, 13, x + 12, y + 8 + i * lh, Ui.FG, bubble, span[0], span[1]);

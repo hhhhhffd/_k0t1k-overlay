@@ -86,7 +86,7 @@ final class PerfView {
             for (float ms : new float[] {16.7f, 33.3f}) {
                 if (ms < max) {
                     float gy = y + h - h * ms / max;
-                    ui.rect(x, gy, w, 1, 0x60ece8f6);
+                    ui.rect(x, gy, w, 1, Ui.GRID);
                     ui.text(ui.regular, 10, x + 4, gy - 13, Ui.FG, ms < 20 ? "60 FPS" : "30 FPS");
                 }
             }
@@ -142,7 +142,7 @@ final class PerfView {
 
     private void drawHudBox(Ui ui, float x, float y, float w, float h) {
         int alpha = Math.round(0xc0 * options.hudOpacity / 100f);
-        ui.round(x, y, w, h, 8, alpha << 24 | 0x0b0910);
+        ui.round(x, y, w, h, 8, alpha << 24 | (Ui.BASE & 0xffffff));
         float ty = y + HUD_PAD;
         float left = x + HUD_PAD + 2;
         float right = x + w - HUD_PAD - 2;
@@ -195,7 +195,7 @@ final class PerfView {
      * true once the Done button is clicked (the overlay handles Esc and Enter itself).
      */
     boolean edit(Ui ui, float screenW, float screenH) {
-        ui.rect(0, 0, screenW, screenH, 0x80060509);
+        ui.rect(0, 0, screenW, screenH, Ui.VEIL_LIGHT);
         float[] r = new float[4];
         hudRect(screenW, screenH, r);
         if (ui.clicked && ui.hover(r[0], r[1], r[2], r[3])) {
@@ -228,7 +228,7 @@ final class PerfView {
         float boxW = hw + 48;
         float boxX = (screenW - boxW) / 2;
         float boxY = screenH / 2 - 56;
-        ui.panel(boxX, boxY, boxW, 104, 12, 0xf513101c, Ui.LINE);
+        ui.panel(boxX, boxY, boxW, 104, 12, Ui.CARD, Ui.LINE);
         ui.text(ui.bold, 15, (screenW - hw) / 2, boxY + 18, Ui.FG, hint);
         return ui.button((screenW - bw) / 2, boxY + 54, bw, 32, done, true);
     }

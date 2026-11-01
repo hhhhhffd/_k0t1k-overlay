@@ -46,7 +46,7 @@ Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it
 | **Tools** | Overworld ↔ Nether coordinates (with "my position"), stacks and shulker boxes, timers and alarms that survive a restart, the latest screenshots. Each F2 screenshot shows a toast with the instance and position. |
 | **Mods** | The instance's mods with a search and what each one does (from the mod's metadata), with links to Modrinth and the mod's homepage. |
 | **Profile** | Lifetime stats (play time, sessions, deaths, advancements, screenshots, crashes) and the launcher's achievements on top of them. |
-| **Performance** | FPS, frame time, 1% low, a frame time graph, heap, GC and the game's CPU load, plus an optional HUD you can place anywhere, resize and pick metrics for (Settings). Notifications can appear under the crosshair or in any corner. |
+| **Performance** | FPS, frame time, 1% low, a frame time graph, heap, GC and the game's CPU load, plus an optional HUD you can place anywhere, resize and pick metrics for (Settings). Notifications can appear under the crosshair or in any corner; set how long they stay (one global time, or your own per type such as timers) and switch whole types off, e.g. music. Click a notification to dismiss it; hovering pauses it. |
 | **Browser** | A real Chromium (JCEF, off-screen rendering) with tabs (restored on the next start), an address bar that also searches (Google, Yandex, DuckDuckGo or Bing), editable bookmarks, a page context menu, page zoom and fullscreen video. |
 | **Recording** | OBS-like capture with ffmpeg: **Shift+F10** starts and stops a recording, and a replay buffer keeps the last 15 to 300 seconds for **Shift+F2** or the button in Tools. Full resolution, 30 or 60 fps, hardware encoders, game, desktop and microphone audio on separate tracks, and an animated WebP from the last clip. |
 | **Music** | What the system plays (Spotify, a browser tab, any player) with previous, play/pause and next, and a toast when a new track starts. |
@@ -54,6 +54,8 @@ Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it
 | **Settings** | Overlay settings in sections: the interface scale, the HUD, notifications, the cat, recording (ffmpeg, encoder, format, quality, audio, WebP), hotkeys, the browser, fake hardware. |
 | **Fake hardware** | A joke: the F3 debug screen shows a CPU name and thread count, a GPU name and vendor, and (Minecraft 26.x only) a maximum memory that you type in Settings. Off by default. Only F3 changes; the game, the Performance tab and crash reports keep the real hardware. |
 | **Cat** | The launcher's cat sits in a corner and reacts to deaths, advancements, a five minute AFK, timers, screenshots and achievements with a speech bubble (can be turned off in Settings). |
+
+The overlay is styled like the launcher (rounded cards, underlined section links, the same buttons and fields) and takes its colours from the launcher's current theme, light themes included: the launcher writes `<dataDir>/theme.json` and the overlay picks up changes within two seconds. Without the file it uses the launcher's default dark palette. See [INTEGRATION.md](INTEGRATION.md#theme).
 
 The player's position, dimension and health are read by reflection on `net.minecraft` classes, so they
 only work where the game runs with Mojang names: Minecraft 26.1+ and NeoForge. Elsewhere the position
@@ -363,6 +365,7 @@ Options are `key=value` pairs separated by commas after `=`. Each can also be se
 | `chat-history.tsv` | One message per line, `epoch ms TAB server TAB text`, where backslash escapes tab, newline and itself |
 | `notes/<id>.txt` | One note per file |
 | `overlay.properties` | The HUD and cat settings |
+| `theme.json` | The launcher's colours (written by the launcher, see INTEGRATION.md); the overlay re-reads it when it changes |
 | `stats.properties` | Lifetime counters and unlocked achievements; each game adds its own changes, so games running at once do not overwrite each other |
 | `session-<hash>.lock` | Present while a game folder is running; one left behind counts as a crash |
 | `timers.tsv` | `due epoch ms TAB length ms TAB label` |

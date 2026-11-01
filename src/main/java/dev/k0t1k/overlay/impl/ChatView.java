@@ -170,7 +170,7 @@ final class ChatView {
         }
         if (hot && ui.clickedIn(x - 6, y, w + 12, row.h)) {
             ui.platform.setClipboard(text);
-            overlay.toast(strings.get("chat.copied"), text);
+            overlay.toast(ToastKind.OTHER, strings.get("chat.copied"), text);
         }
     }
 
@@ -196,7 +196,7 @@ final class ChatView {
                 scroll = maxScroll - t * maxScroll;
             }
         }
-        ui.round(x, thumbY, 5, thumbH, 2.5f, draggingBar || hot ? 0xff4a3f6e : 0xff332b4d);
+        ui.round(x, thumbY, 5, thumbH, 2.5f, draggingBar || hot ? Ui.THUMB_HOT : Ui.THUMB);
     }
 
     private int firstVisible(float viewTop) {

@@ -364,7 +364,7 @@ final class RecordingView {
             Links.folder(folder);
         } catch (IOException e) {
             overlay.report(e);
-            overlay.toast(strings.get("error"), e.getMessage());
+            overlay.toast(ToastKind.ERROR, strings.get("error"), e.getMessage());
         }
     }
 

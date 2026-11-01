@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.Properties;
 
 /**
@@ -33,6 +34,9 @@ final class Options {
     static final int MIN_HUD_SIZE = 50;
     static final int MAX_HUD_SIZE = 200;
     static final int MIN_HUD_OPACITY = 20;
+    static final int MIN_TOAST_SECONDS = 1;
+    static final int MAX_TOAST_SECONDS = 60;
+    static final int MAX_KIND_TOAST_SECONDS = 120;
     static final int TOAST_CENTER = 0;
     static final int TOAST_TOP_LEFT = 1;
     static final int TOAST_TOP_RIGHT = 2;
@@ -66,6 +70,12 @@ final class Options {
     boolean hudGraph = true;
     /** Where toasts appear: one of the {@code TOAST_*} constants. */
     int toastPos = TOAST_BOTTOM_RIGHT;
+    /** How long a toast stays, {@link #MIN_TOAST_SECONDS} to {@link #MAX_TOAST_SECONDS}. */
+    int toastSeconds = 5;
+    /** Per kind (by ordinal): whether it is shown at all. */
+    final boolean[] toastShown = new boolean[ToastKind.values().length];
+    /** Per kind (by ordinal): its own lifetime in seconds up to {@link #MAX_KIND_TOAST_SECONDS}, 0 for the global one. */
+    final int[] toastKindSeconds = new int[ToastKind.values().length];
     /** Whether the cat pops up to react to deaths, advancements, AFK and timers. */
     boolean cat = true;
     // Recording and the replay buffer (OpenGL 3.2 and Vulkan), encoded by ffmpeg.
@@ -141,7 +151,20 @@ final class Options {
 
     private final Path settingsFile;
 
+    /** How long a toast of this kind stays in milliseconds, or 0 when that kind is switched off. */
+    long toastMillis(ToastKind kind) {
+        if (!toastShown[kind.ordinal()]) {
+            return 0;
+        }
+        int own = toastKindSeconds[kind.ordinal()];
+        return (own > 0 ? own : toastSeconds) * 1000L;
+    }
+
     Options(String agentArgs) {
+        Arrays.fill(toastShown, true);
+        for (ToastKind kind : ToastKind.values()) {
+            toastKindSeconds[kind.ordinal()] = kind.defaultSeconds;
+        }
         Properties args = new Properties();
         for (String pair : agentArgs.split(",")) {
             int eq = pair.indexOf('=');
@@ -211,6 +234,12 @@ final class Options {
         hudSize = intSetting(saved, "hudSize", 100, MIN_HUD_SIZE, MAX_HUD_SIZE);
         hudOpacity = intSetting(saved, "hudOpacity", 100, MIN_HUD_OPACITY, 100);
         toastPos = intSetting(saved, "toastPos", TOAST_BOTTOM_RIGHT, TOAST_CENTER, TOAST_BOTTOM_RIGHT);
+        toastSeconds = intSetting(saved, "toastSeconds", 5, MIN_TOAST_SECONDS, MAX_TOAST_SECONDS);
+        for (ToastKind kind : ToastKind.values()) {
+            toastShown[kind.ordinal()] = Boolean.parseBoolean(saved.getProperty("toastShow." + kind.id, "true"));
+            toastKindSeconds[kind.ordinal()] = intSetting(saved, "toastSeconds." + kind.id, kind.defaultSeconds,
+                    0, MAX_KIND_TOAST_SECONDS);
+        }
         hudFps = Boolean.parseBoolean(saved.getProperty("hudFps", "true"));
         hudFrame = Boolean.parseBoolean(saved.getProperty("hudFrame", "true"));
         hudLow = Boolean.parseBoolean(saved.getProperty("hudLow", "false"));
@@ -278,6 +307,11 @@ final class Options {
         snapshot.setProperty("hudGc", Boolean.toString(hudGc));
         snapshot.setProperty("hudGraph", Boolean.toString(hudGraph));
         snapshot.setProperty("toastPos", Integer.toString(toastPos));
+        snapshot.setProperty("toastSeconds", Integer.toString(toastSeconds));
+        for (ToastKind kind : ToastKind.values()) {
+            snapshot.setProperty("toastShow." + kind.id, Boolean.toString(toastShown[kind.ordinal()]));
+            snapshot.setProperty("toastSeconds." + kind.id, Integer.toString(toastKindSeconds[kind.ordinal()]));
+        }
         snapshot.setProperty("cat", Boolean.toString(cat));
         saveRecording(snapshot);
         snapshot.setProperty("uiScale", Integer.toString(uiScale));

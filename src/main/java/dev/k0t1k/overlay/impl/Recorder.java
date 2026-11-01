@@ -19,7 +19,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
@@ -72,12 +71,17 @@ final class Recorder {
     private static final String[] AUDIO_NAMES = {"Game", "Desktop", "Microphone"};
 
     private final Options options;
+    /** Shows a toast of the given kind. */
+    interface Notifier {
+        void toast(ToastKind kind, String title, String body);
+    }
+
     private final Strings strings;
     private final Ffmpeg ffmpeg;
     private final Replay replay;
     private final ScheduledExecutorService io;
     private final Executor render;
-    private final BiConsumer<String, String> notify;
+    private final Notifier notify;
     private final Consumer<Throwable> onError;
 
     private volatile Session recording;
@@ -106,7 +110,7 @@ final class Recorder {
     private Thread writer;
 
     Recorder(Options options, Ffmpeg ffmpeg, ScheduledExecutorService io, Executor render,
-            BiConsumer<String, String> notify, Consumer<Throwable> onError) {
+            Notifier notify, Consumer<Throwable> onError) {
         this.options = options;
         this.strings = options.strings;
         this.ffmpeg = ffmpeg;
@@ -191,7 +195,7 @@ final class Recorder {
         }
         Session session = buffer;
         if (session == null || session.state != State.RUNNING) {
-            notify.accept(strings.get("replay.title"), strings.get(options.replayBuffer
+            notify.toast(ToastKind.RECORDING, strings.get("replay.title"), strings.get(options.replayBuffer
                     ? bufferProblem().isEmpty() ? "replay.starting" : "replay.stopped" : "replay.off"));
             return;
         }
@@ -199,18 +203,18 @@ final class Recorder {
             return;
         }
         busy = true;
-        notify.accept(strings.get("replay.title"), strings.get("replay.saving"));
+        notify.toast(ToastKind.RECORDING, strings.get("replay.title"), strings.get("replay.saving"));
         io.execute(() -> {
             try {
                 Path file = replay.save();
                 if (file == null) {
-                    notify.accept(strings.get("replay.title"), strings.get("replay.failed"));
+                    notify.toast(ToastKind.ERROR, strings.get("replay.title"), strings.get("replay.failed"));
                 } else {
                     lastClip = file;
-                    notify.accept(strings.get("replay.saved"), file.getFileName() + "\n" + file.getParent());
+                    notify.toast(ToastKind.RECORDING, strings.get("replay.saved"), file.getFileName() + "\n" + file.getParent());
                 }
             } catch (IOException e) {
-                notify.accept(strings.get("rec.failed"), e.getMessage());
+                notify.toast(ToastKind.ERROR, strings.get("rec.failed"), e.getMessage());
                 onError.accept(e);
             } finally {
                 busy = false;
@@ -222,24 +226,24 @@ final class Recorder {
     void makeWebp() {
         Path clip = lastClip;
         if (clip == null) {
-            notify.accept(strings.get("webp.title"), strings.get("webp.noClip"));
+            notify.toast(ToastKind.RECORDING, strings.get("webp.title"), strings.get("webp.noClip"));
             return;
         }
         if (busy || !ready()) {
             return;
         }
         if (!ffmpeg.hasWebp()) {
-            notify.accept(strings.get("webp.title"), strings.get("webp.missing"));
+            notify.toast(ToastKind.RECORDING, strings.get("webp.title"), strings.get("webp.missing"));
             return;
         }
         busy = true;
-        notify.accept(strings.get("webp.title"), strings.get("webp.making"));
+        notify.toast(ToastKind.RECORDING, strings.get("webp.title"), strings.get("webp.making"));
         io.execute(() -> {
             try {
                 Path file = replay.webp(clip);
-                notify.accept(strings.get("webp.saved"), file.getFileName() + "\n" + file.getParent());
+                notify.toast(ToastKind.RECORDING, strings.get("webp.saved"), file.getFileName() + "\n" + file.getParent());
             } catch (IOException e) {
-                notify.accept(strings.get("rec.failed"), e.getMessage());
+                notify.toast(ToastKind.ERROR, strings.get("rec.failed"), e.getMessage());
                 onError.accept(e);
             } finally {
                 busy = false;
@@ -250,15 +254,15 @@ final class Recorder {
     /** Whether recording can start now; says why not when it cannot. */
     private boolean ready() {
         if (broken) {
-            notify.accept(strings.get("rec.title"), strings.get("rec.unsupported"));
+            notify.toast(ToastKind.RECORDING, strings.get("rec.title"), strings.get("rec.unsupported"));
             return false;
         }
         if (ffmpeg.path() == null) {
-            notify.accept(strings.get("rec.title"), strings.get("rec.noFfmpeg"));
+            notify.toast(ToastKind.RECORDING, strings.get("rec.title"), strings.get("rec.noFfmpeg"));
             return false;
         }
         if (ffmpeg.probing()) {
-            notify.accept(strings.get("rec.title"), strings.get("rec.probing"));
+            notify.toast(ToastKind.RECORDING, strings.get("rec.title"), strings.get("rec.probing"));
             return false;
         }
         return true;
@@ -592,7 +596,7 @@ final class Recorder {
                 if (!publish) {
                     abandon();
                 } else if (!isBuffer) {
-                    notify.accept(strings.get("rec.title"), strings.get("rec.started"));
+                    notify.toast(ToastKind.RECORDING, strings.get("rec.title"), strings.get("rec.started"));
                 }
             } catch (IOException | RuntimeException e) {
                 onError.accept(e);
@@ -658,7 +662,7 @@ final class Recorder {
                     feeds.add(results[i]);
                     names.add(AUDIO_NAMES[i]);
                 } else if (problems[i] != null) {
-                    notify.accept(strings.get("rec.title"), strings.format("rec.audioFailed", AUDIO_NAMES[i], problems[i]));
+                    notify.toast(ToastKind.ERROR, strings.get("rec.title"), strings.format("rec.audioFailed", AUDIO_NAMES[i], problems[i]));
                 }
             }
             return names;
@@ -845,7 +849,7 @@ final class Recorder {
             if (isBuffer) {
                 bufferBlockedBy = reason.isEmpty() ? "?" : reason;
             }
-            notify.accept(strings.get("rec.failed"), reason.isEmpty() ? strings.get("rec.unknown") : reason);
+            notify.toast(ToastKind.ERROR, strings.get("rec.failed"), reason.isEmpty() ? strings.get("rec.unknown") : reason);
             state = State.ENDED;
         }
 
@@ -883,14 +887,14 @@ final class Recorder {
         /** Reports a finished recording and remuxes it to MP4 when asked to. */
         private void publish(boolean ok, String reason) {
             if (!ok && (file == null || !Files.exists(file))) {
-                notify.accept(strings.get("rec.failed"), reason.isEmpty() ? strings.get("rec.unknown") : reason);
+                notify.toast(ToastKind.ERROR, strings.get("rec.failed"), reason.isEmpty() ? strings.get("rec.unknown") : reason);
                 return;
             }
             Path result = file;
             busy = true;
             try {
                 if (options.remux && "mkv".equals(options.container)) {
-                    notify.accept(strings.get("rec.title"), strings.get("rec.remuxing"));
+                    notify.toast(ToastKind.RECORDING, strings.get("rec.title"), strings.get("rec.remuxing"));
                     String name = file.getFileName().toString();
                     Path mp4 = Replay.reserve(file.getParent(), name.substring(0, name.length() - ".mkv".length()), "mp4");
                     try {
@@ -904,9 +908,9 @@ final class Recorder {
                     result = mp4;
                 }
                 lastClip = result;
-                notify.accept(strings.get("rec.saved"), result.getFileName() + "\n" + result.getParent());
+                notify.toast(ToastKind.RECORDING, strings.get("rec.saved"), result.getFileName() + "\n" + result.getParent());
             } catch (IOException e) {
-                notify.accept(strings.get("rec.failed"), e.getMessage());
+                notify.toast(ToastKind.ERROR, strings.get("rec.failed"), e.getMessage());
                 lastClip = file;
                 onError.accept(e);
             } finally {
@@ -1004,7 +1008,7 @@ final class Recorder {
         boolean left = options.hud && options.hudX >= 0.5f && options.hudY < 0.5f;
         float bw = tw + 38;
         float x = left ? 12 : w - bw - 12;
-        ui.round(x, 12, bw, 26, 13, 0xcc13101c);
+        ui.round(x, 12, bw, 26, 13, Theme.alpha(Ui.SURFACE, 0xcc));
         if (System.currentTimeMillis() / 600 % 2 == 0) {
             ui.round(x + 10, 21, 8, 8, 4, 0xffed4245);
         }

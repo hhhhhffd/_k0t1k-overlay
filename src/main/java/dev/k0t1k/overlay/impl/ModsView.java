@@ -63,7 +63,7 @@ final class ModsView {
             boolean active = mod == selected;
             boolean hot = inList && ui.hover(x + 4, iy, listW - 8, itemH - 4);
             if (active || hot) {
-                ui.round(x + 4, iy, listW - 8, itemH - 4, 7, active ? 0x26a259f7 : Ui.RAISED);
+                ui.round(x + 4, iy, listW - 8, itemH - 4, 7, active ? Ui.ACCENT_SOFT : Ui.RAISED);
             }
             ui.textFit(ui.bold, 13, x + 14, iy + 5, listW - 28, mod.enabled ? Ui.FG : Ui.FAINT, mod.name);
             String sub = (mod.version.isEmpty() ? mod.file : mod.version) + (mod.enabled ? "" : " · " + strings.get("mods.disabled"));
@@ -135,10 +135,10 @@ final class ModsView {
     private void open(String url) {
         try {
             Links.browse(url);
-            overlay.toast(strings.get("mods.opened"), url);
+            overlay.toast(ToastKind.OTHER, strings.get("mods.opened"), url);
         } catch (IOException e) {
             overlay.report(e);
-            overlay.toast(strings.get("error"), e.getMessage());
+            overlay.toast(ToastKind.ERROR, strings.get("error"), e.getMessage());
         }
     }
 }
