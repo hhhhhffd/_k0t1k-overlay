@@ -65,6 +65,7 @@ The agent creates these files on demand:
 | `chat-history.tsv` | Every chat line ever received, one per line: `epoch ms TAB server TAB text`. Backslash escapes tab, newline and itself. Append-only, so it grows forever, by roughly 100 bytes per message. |
 | `notes/<id>.txt` | One UTF-8 file per note. |
 | `overlay.properties` | The settings: HUD on/off and its corner, the cat, the interface scale, recording and the hotkeys. |
+| `theme.json` | **Written by the launcher, read by the agent:** the launcher's colours, see [Theme](#theme). |
 
 - Several games can run at the same time with the same `dataDir`. Each appends to the history in
   one write per batch.
@@ -73,6 +74,40 @@ The agent creates these files on demand:
 - **Privacy:** the history keeps private messages and server chat in plain text with no limit. The
   launcher should say so where the overlay is switched on, and should offer a way to clear it:
   deleting `chat-history.tsv` while no game is running is enough.
+
+## Theme
+
+The overlay looks like the launcher and follows its theme. The launcher writes the resolved theme to
+`<dataDir>/theme.json` (atomically: write a temporary file, then rename) at every theme change, so the file is
+current whenever a game starts. The agent reads it at startup and checks its modification time every two
+seconds, so a theme changed in the launcher while a game runs shows up in the overlay without a restart. A
+missing or invalid file leaves the launcher's default dark palette (or the previous colours).
+
+```json
+{
+  "version": 1,
+  "id": "light",
+  "name": "light",
+  "dark": false,
+  "colors": {
+    "base": "#f1eff7", "surface": "#ffffff", "raised": "#f8f6fc", "hover": "#ebe7f4", "line": "#d9d3e8",
+    "fg": "#1c1730", "muted": "#5d5676", "faint": "#8a839f",
+    "accent": "#7c3aed", "accent-fg": "#ffffff", "icon": "#7c3aed",
+    "ok": "#15803d", "warn": "#b45309", "danger": "#dc2626"
+  }
+}
+```
+
+- `colors` holds the launcher's `--c-*` tokens (`apps/app/src/style.css`) as `#rrggbb`, after the built-in,
+  custom or file theme was applied. The launcher UI computes them from the page (the CSS owns the palettes),
+  so the contract is the resulting colours, not a copy of the built-in themes.
+- Every token is optional. The overlay derives what is missing (`raised`, `hover`, `line` from `surface` and
+  `fg`; `faint` from `muted`; `accent-fg` from the accent's brightness) and falls back to the default dark
+  theme for `ok`, `warn`, `danger`. `dark` defaults to the brightness of `base`.
+- Unknown tokens are ignored. A `version` other than 1 is ignored as a whole.
+- The overlay derives its own shades from these (hover and active fills, accent tints, the veil that dims the
+  game) instead of reading more tokens, so light themes work as well; the veil always darkens the game.
+- The font stays Inter (bundled): the launcher's Segoe UI is not shipped with the agent.
 
 ## Distribution and updates
 
@@ -168,6 +203,6 @@ of the project does. The agent was tested this way. Two environment problems can
 - **No channel to the launcher.** A local WebSocket was discussed as the transport for launcher
   features inside the game, such as chat with friends, support tickets or the resource pack
   converter. It is not designed or implemented. The user will specify it.
-- **No settings from the launcher** beyond `lang`, `dataDir` and `scale`. The player's settings live in
+- **No settings from the launcher** beyond `lang`, `dataDir`, `scale` and the theme file. The player's settings live in
   `overlay.properties`. Neither the hotkey nor the enable switch can be set in the agent; the
   launcher decides whether to add the agent at all.

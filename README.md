@@ -55,6 +55,8 @@ Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it
 | **Fake hardware** | A joke: the F3 debug screen shows a CPU name and thread count, a GPU name and vendor, and (Minecraft 26.x only) a maximum memory that you type in Settings. Off by default. Only F3 changes; the game, the Performance tab and crash reports keep the real hardware. |
 | **Cat** | The launcher's cat sits in a corner and reacts to deaths, advancements, a five minute AFK, timers, screenshots and achievements with a speech bubble (can be turned off in Settings). |
 
+The overlay is styled like the launcher (rounded cards, underlined section links, the same buttons and fields) and takes its colours from the launcher's current theme, light themes included: the launcher writes `<dataDir>/theme.json` and the overlay picks up changes within two seconds. Without the file it uses the launcher's default dark palette. See [INTEGRATION.md](INTEGRATION.md#theme).
+
 The player's position, dimension and health are read by reflection on `net.minecraft` classes, so they
 only work where the game runs with Mojang names: Minecraft 26.1+ and NeoForge. Elsewhere the position
 button is hidden and deaths are not counted. Advancements are read from the chat.
@@ -363,6 +365,7 @@ Options are `key=value` pairs separated by commas after `=`. Each can also be se
 | `chat-history.tsv` | One message per line, `epoch ms TAB server TAB text`, where backslash escapes tab, newline and itself |
 | `notes/<id>.txt` | One note per file |
 | `overlay.properties` | The HUD and cat settings |
+| `theme.json` | The launcher's colours (written by the launcher, see INTEGRATION.md); the overlay re-reads it when it changes |
 | `stats.properties` | Lifetime counters and unlocked achievements; each game adds its own changes, so games running at once do not overwrite each other |
 | `session-<hash>.lock` | Present while a game folder is running; one left behind counts as a crash |
 | `timers.tsv` | `due epoch ms TAB length ms TAB label` |
