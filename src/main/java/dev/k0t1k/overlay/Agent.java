@@ -40,6 +40,7 @@ public final class Agent {
         "org.lwjgl.sdl.SDLEvents",
         "org.lwjgl.sdl.SDLKeyboard",
         "org.lwjgl.sdl.SDLMouse",
+        "org.lwjgl.sdl.SDLMisc",
         "org.lwjgl.vulkan.KHRSwapchain",
         "org.lwjgl.vulkan.VK10",
         "org.lwjgl.vulkan.VK11",
@@ -60,6 +61,14 @@ public final class Agent {
         "org.lwjgl.opengl.GL11C",
     };
 
+    /**
+     * Where the game opens a web address: the process that starts the system's handler (Minecraft 1.13
+     * to 26.2 through Runtime.exec), java.awt.Desktop (1.8 to 1.12; SDL_OpenURL, 26.3+, is in the window
+     * types). JDK classes that may be loaded already, so they are retransformed; like the hardware hooks
+     * they never start the overlay.
+     */
+    private static final String[] LAUNCH_TYPES = {"java.lang.ProcessBuilder", "java.awt.Desktop"};
+
     private static final ElementMatcher<MethodDescription> HARDWARE_ENTER = named("display");
 
     private static final ElementMatcher<MethodDescription> HARDWARE_EXIT = named("_getCpuInfo")
@@ -74,7 +83,7 @@ public final class Agent {
             "glfwSetInputMode",
             // SDL (Minecraft 26.3+)
             "SDL_GL_SwapWindow", "SDL_SetWindowRelativeMouseMode", "SDL_WarpMouseInWindow",
-            "SDL_StartTextInput", "SDL_StopTextInput",
+            "SDL_StartTextInput", "SDL_StopTextInput", "SDL_OpenURL",
             // Vulkan
             "vkQueuePresentKHR", "vkCreateSwapchainKHR", "vkDestroySwapchainKHR", "vkDestroyDevice",
             // LWJGL 2 (Minecraft 1.12.2 and older): Mouse.setGrabbed
@@ -87,7 +96,7 @@ public final class Agent {
             "glfwGetKey", "glfwGetMouseButton",
             "SDL_PollEvent",
             // A held-back call reports success, as SDL would have.
-            "SDL_SetWindowRelativeMouseMode", "SDL_StartTextInput", "SDL_StopTextInput",
+            "SDL_SetWindowRelativeMouseMode", "SDL_StartTextInput", "SDL_StopTextInput", "SDL_OpenURL",
             "vkQueuePresentKHR",
             "vkCreateSwapchainKHR", "vkGetDeviceQueue", "vkGetDeviceQueue2",
             // LWJGL 2: Keyboard and Mouse event queues and state
@@ -102,7 +111,8 @@ public final class Agent {
 
         new AgentBuilder.Default()
                 .disableClassFormatChanges()
-                .ignore(not(namedOneOf(WINDOW_TYPES).or(namedOneOf(HARDWARE_TYPES))))
+                .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
+                .ignore(not(namedOneOf(WINDOW_TYPES).or(namedOneOf(HARDWARE_TYPES)).or(namedOneOf(LAUNCH_TYPES))))
                 .with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
                 .type(namedOneOf(WINDOW_TYPES))
                 .transform((builder, type, loader, module, domain) -> builder
@@ -112,6 +122,12 @@ public final class Agent {
                 .transform((builder, type, loader, module, domain) -> builder
                         .visit(Advice.to(Enter.class).on(HARDWARE_ENTER))
                         .visit(Advice.to(Exit.class).on(HARDWARE_EXIT)))
+                .type(named("java.lang.ProcessBuilder"))
+                .transform((builder, type, loader, module, domain) -> builder
+                        .visit(Advice.to(EnterThis.class).on(named("start").and(takesArguments(0)))))
+                .type(named("java.awt.Desktop"))
+                .transform((builder, type, loader, module, domain) -> builder
+                        .visit(Advice.to(Enter.class).on(named("browse"))))
                 .installOn(instrumentation);
     }
 
@@ -136,6 +152,21 @@ public final class Agent {
                 return false;
             }
             return Boolean.TRUE.equals(result);
+        }
+    }
+
+    /** Calls the overlay before an instance method that takes no arguments, with the instance as the only argument. */
+    static final class EnterThis {
+        @Advice.OnMethodEnter(suppress = Throwable.class)
+        @SuppressWarnings("unchecked")
+        static void enter(
+                @Advice.Origin Class<?> type,
+                @Advice.Origin("#m") String method,
+                @Advice.This Object self) {
+            Object hook = System.getProperties().get(CALL);
+            if (hook != null) {
+                ((Function<Object[], Object>) hook).apply(new Object[] {type, method, new Object[] {self}});
+            }
         }
     }
 
@@ -179,7 +210,8 @@ public final class Agent {
             Function<Object[], Object> overlay = impl;
             if (overlay == null) {
                 Class<?> type = (Class<?>) call[0];
-                if (Arrays.asList(HARDWARE_TYPES).contains(type.getName())) {
+                if (Arrays.asList(HARDWARE_TYPES).contains(type.getName())
+                        || Arrays.asList(LAUNCH_TYPES).contains(type.getName())) {
                     return null;
                 }
                 overlay = init(type);

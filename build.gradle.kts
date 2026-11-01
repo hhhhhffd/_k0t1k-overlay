@@ -105,6 +105,8 @@ tasks.shadowJar {
     manifest {
         attributes(
             "Premain-Class" to "dev.k0t1k.overlay.Agent",
+            // The link hooks retransform JDK classes that are loaded before the agent starts.
+            "Can-Retransform-Classes" to "true",
             "Implementation-Version" to project.version,
         )
     }
