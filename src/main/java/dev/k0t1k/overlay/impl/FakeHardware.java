@@ -50,7 +50,7 @@ final class FakeHardware {
 
     /**
      * A key event the game sees. F3 toggles the debug screen on release, unless another key was
-     * pressed while it was held (F3+D and the like).
+     * used in a recognized debug combination while it was held (F3+D and the like).
      */
     void key(int key, int action) {
         if (key == F3) {
@@ -63,9 +63,15 @@ final class FakeHardware {
                 }
                 f3Down = false;
             }
-        } else if (action != Keys.RELEASE && f3Down) {
+        } else if (action != Keys.RELEASE && f3Down && debugCombo(key)) {
             f3Combo = true;
         }
+    }
+
+    private static boolean debugCombo(int key) {
+        // Approximation across Minecraft 1.8–1.21; other keys must still allow the F3 toggle.
+        return key >= '1' && key <= '9' || key >= 'A' && key <= 'Z'
+                && "ABCDFGHILNPQSTVW".indexOf(key) >= 0 || key == 293 || key == Keys.ESCAPE;
     }
 
     /** Before {@code DebugEntry*#display}: swaps the displayer for the rewriting proxy, or null to change nothing. */
@@ -147,6 +153,15 @@ final class FakeHardware {
         }
 
         private String rewrite(String line) {
+            try {
+                return rewriteLine(line);
+            } catch (RuntimeException e) {
+                // Malformed or changed debug text must never prevent the game's F3 from drawing.
+                return line;
+            }
+        }
+
+        private String rewriteLine(String line) {
             if (line.startsWith("CPU: ")) {
                 return "CPU: " + cpu();
             }
@@ -157,14 +172,14 @@ final class FakeHardware {
             if (line.startsWith("Mem: ")) {
                 long[] n = numbers(line);
                 if (n.length == 3) {
-                    long max = options.fakeMemory;
+                    long max = Math.max(1, options.fakeMemory);
                     return String.format(Locale.ROOT, "Mem: %2d%% %03d/%03dMiB", n[1] * 100 / max, n[1], max);
                 }
             }
             if (line.startsWith("Allocated: ")) {
                 long[] n = numbers(line);
                 if (n.length == 2) {
-                    return String.format(Locale.ROOT, "Allocated: %2d%% %03dMiB", n[1] * 100 / options.fakeMemory, n[1]);
+                    return String.format(Locale.ROOT, "Allocated: %2d%% %03dMiB", n[1] * 100 / Math.max(1, options.fakeMemory), n[1]);
                 }
             }
             return line;

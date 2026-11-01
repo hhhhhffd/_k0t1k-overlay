@@ -336,6 +336,7 @@ public final class Overlay implements Function<Object[], Object> {
      * chat lines and unsaved notes are written from here.
      */
     private void saveOnExit() {
+        browserView.saveOnExit();
         chat.pollNow();
         notes.saveNow();
         media.stop();
@@ -791,6 +792,7 @@ public final class Overlay implements Function<Object[], Object> {
             toasts.clear();
         } else {
             settingsView.flush();
+            browserView.flushSession();
             if (hudEditing) {
                 endHudEdit();
             }

@@ -8,6 +8,8 @@ import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 
 /**
@@ -76,6 +78,8 @@ final class BrowserView {
     private final Overlay overlay;
     private final Options options;
     private final BrowserData data;
+    private final Queue<Runnable> pendingWrites = new ConcurrentLinkedQueue<>();
+    private final Object writeLock = new Object();
     private final List<Tab> tabs = new ArrayList<>();
     private int active;
     private final TextEdit address = new TextEdit();
@@ -112,7 +116,10 @@ final class BrowserView {
         this.strings = strings;
         this.overlay = overlay;
         this.options = overlay.options();
-        this.data = new BrowserData(options.dataDir, io, overlay::report);
+        this.data = new BrowserData(options.dataDir, task -> {
+            pendingWrites.add(task);
+            io.execute(this::flushWrites);
+        }, overlay::report);
         for (BrowserData.Entry saved : data.tabs) {
             tabs.add(new Tab(saved.url, saved.title));
         }
@@ -126,7 +133,7 @@ final class BrowserView {
 
     // ---- drawing ----
 
-    void draw(Ui ui, float x, float y, float w, float h) {
+    synchronized void draw(Ui ui, float x, float y, float w, float h) {
         menuInput(ui);
         Tab tab = tabs.get(active);
         boolean ready = browser.state == Browser.State.READY && overlay.imagesSupported();
@@ -177,7 +184,7 @@ final class BrowserView {
             float inset = full ? 0 : 1;
             drawPage(ui, tab, engine, x + inset, py + inset, w - inset * 2, ph - inset * 2);
         }
-        saveSession();
+        saveSession(false);
         drawMenu(ui, x, y, w, h);
     }
 
@@ -467,9 +474,9 @@ final class BrowserView {
     }
 
     /** Remembers the open tabs for the next game, at most twice a second. */
-    private void saveSession() {
+    private void saveSession(boolean force) {
         long now = System.currentTimeMillis();
-        if (now - sessionCheck < 500) {
+        if (!force && now - sessionCheck < 500) {
             return;
         }
         sessionCheck = now;
@@ -481,6 +488,28 @@ final class BrowserView {
                 open.add(new BrowserData.Entry(t.title(), t.url()));
             }
             data.saveTabs(open, active);
+        }
+    }
+
+    synchronized void flushSession() {
+        saveSession(true);
+    }
+
+    void saveOnExit() {
+        flushSession();
+        // The daemon IO thread may stop with older snapshots queued; drain them in order here.
+        flushWrites();
+    }
+
+    private void flushWrites() {
+        synchronized (writeLock) {
+            for (Runnable task; (task = pendingWrites.poll()) != null; ) {
+                try {
+                    task.run();
+                } catch (RuntimeException e) {
+                    overlay.report(e);
+                }
+            }
         }
     }
 

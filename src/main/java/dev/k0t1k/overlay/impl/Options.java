@@ -220,8 +220,8 @@ final class Options {
         fakeCpu = saved.getProperty("fakeCpu", fakeCpu);
         fakeGpu = saved.getProperty("fakeGpu", fakeGpu);
         fakeVendor = saved.getProperty("fakeVendor", fakeVendor);
-        fakeThreads = number(saved, "fakeThreads", fakeThreads);
-        fakeMemory = number(saved, "fakeMemory", fakeMemory);
+        fakeThreads = intSetting(saved, "fakeThreads", fakeThreads, 1, 1024);
+        fakeMemory = intSetting(saved, "fakeMemory", fakeMemory, 1, 16777216);
     }
 
     private static int intSetting(Properties saved, String key, int fallback, int min, int max) {

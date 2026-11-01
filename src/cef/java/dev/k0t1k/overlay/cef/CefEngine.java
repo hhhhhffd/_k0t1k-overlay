@@ -21,6 +21,7 @@ import org.cef.callback.CefContextMenuParams;
 import org.cef.callback.CefMenuModel;
 import org.cef.handler.CefContextMenuHandlerAdapter;
 import org.cef.handler.CefDisplayHandlerAdapter;
+import org.cef.handler.CefLifeSpanHandlerAdapter;
 import org.cef.handler.CefLoadHandlerAdapter;
 import org.cef.network.CefCookieManager;
 
@@ -63,11 +64,27 @@ public final class CefEngine implements BrowserEngine {
     private volatile boolean loading;
     private volatile boolean fullscreen;
     private volatile boolean playing;
+    /** Guarded by this: the browser exists natively, and a close was asked for. */
+    private boolean created;
+    private boolean closeRequested;
     private boolean visible = true;
 
     private CefEngine(CefClient client, String start) {
         this.client = client;
         this.url = start;
+        client.addLifeSpanHandler(new CefLifeSpanHandlerAdapter() {
+            @Override
+            public void onAfterCreated(CefBrowser b) {
+                synchronized (CefEngine.this) {
+                    created = true;
+                    // Native creation is asynchronous; a close asked for before it was deferred until now.
+                    if (closeRequested) {
+                        b.close(true);
+                        client.dispose();
+                    }
+                }
+            }
+        });
         client.addDisplayHandler(new CefDisplayHandlerAdapter() {
             @Override
             public void onAddressChange(CefBrowser b, CefFrame frame, String address) {
@@ -319,8 +336,11 @@ public final class CefEngine implements BrowserEngine {
     }
 
     @Override
-    public void close() {
-        browser.close(true);
-        client.dispose();
+    public synchronized void close() {
+        closeRequested = true;
+        if (created) {
+            browser.close(true);
+            client.dispose();
+        }
     }
 }
