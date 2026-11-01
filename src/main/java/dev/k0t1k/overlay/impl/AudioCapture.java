@@ -1,6 +1,7 @@
 package dev.k0t1k.overlay.impl;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -12,6 +13,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.FileSystemException;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -37,6 +39,10 @@ final class AudioCapture {
 
     private static final boolean WINDOWS = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
     private static final boolean LINUX = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("linux");
+    /** 48 kHz, 2 channels, 16 bits. */
+    private static final long BYTES_PER_SECOND = 48000L * 4;
+    /** If the video does not start, keep at most this much audio waiting (about 20 seconds). */
+    private static final int MAX_HELD = 4_000_000;
     /** Compiling the helper takes a few seconds the first time. */
     private static final int FIRST_BYTES_SECONDS = 30;
 
@@ -65,6 +71,9 @@ final class AudioCapture {
         private volatile String lastError = "";
         private volatile boolean closed;
         private volatile Socket client;
+        /** When the first video frame went to ffmpeg ({@link System#nanoTime}); audio captured before is dropped. */
+        private volatile long alignNanos;
+        private volatile boolean aligned;
 
         private Feed(Kind kind, Process helper) throws IOException {
             this.kind = kind;
@@ -100,6 +109,17 @@ final class AudioCapture {
             }
         }
 
+        /**
+         * Tells the feed when the video starts. ffmpeg stamps the audio from zero at its first sample and
+         * the video from zero at its first frame, so the audio captured before this instant (helpers are
+         * ready before ffmpeg is) is cut from the stream's front, counted in bytes from the moment the
+         * helper's first samples arrived.
+         */
+        void alignAt(long nanos) {
+            alignNanos = nanos;
+            aligned = true;
+        }
+
         private void run() {
             byte[] buffer = new byte[1 << 15];
             try (InputStream in = helper.getInputStream()) {
@@ -107,14 +127,44 @@ final class AudioCapture {
                 if (n <= 0) {
                     return;
                 }
+                // These samples were captured just before they arrived.
+                long streamStart = System.nanoTime() - n * 1_000_000_000L / BYTES_PER_SECOND;
                 started.countDown();
-                // ffmpeg connects when it starts, which is right after the first bytes arrive.
-                Socket socket = server.accept();
-                client = socket;
-                try (OutputStream out = socket.getOutputStream()) {
-                    do {
-                        out.write(buffer, 0, n);
-                    } while ((n = in.read(buffer)) > 0);
+                // ffmpeg connects when it starts; the samples wait here for that and for the video start.
+                Thread acceptor = new Thread(this::accept, "k0t1k-overlay-audio-accept");
+                acceptor.setDaemon(true);
+                acceptor.start();
+                ByteArrayOutputStream held = new ByteArrayOutputStream();
+                long discarded = 0;
+                OutputStream out = null;
+                long skip = 0;
+                for (;;) {
+                    if (out == null && client != null && aligned) {
+                        out = client.getOutputStream();
+                        long wanted = (alignNanos - streamStart) * BYTES_PER_SECOND / 1_000_000_000L;
+                        skip = Math.max(0, wanted - discarded) / 4 * 4; // whole sample frames
+                        byte[] early = held.toByteArray();
+                        int cut = (int) Math.min(skip, early.length);
+                        skip -= cut;
+                        out.write(early, cut, early.length - cut);
+                    }
+                    if (out == null) {
+                        held.write(buffer, 0, n);
+                        if (held.size() > MAX_HELD) {
+                            discarded += held.size();
+                            held.reset();
+                        }
+                    } else {
+                        int cut = (int) Math.min(skip, n);
+                        skip -= cut;
+                        out.write(buffer, cut, n - cut);
+                    }
+                    if ((n = in.read(buffer)) <= 0) {
+                        break;
+                    }
+                }
+                if (out != null) {
+                    out.close();
                 }
             } catch (IOException e) {
                 if (!closed) {
@@ -122,6 +172,16 @@ final class AudioCapture {
                 }
             } finally {
                 started.countDown();
+            }
+        }
+
+        private void accept() {
+            try {
+                client = server.accept();
+            } catch (IOException e) {
+                if (!closed) {
+                    lastError = e.toString();
+                }
             }
         }
 
@@ -190,18 +250,59 @@ final class AudioCapture {
 
     // ---- Windows ----
 
-    private static Process windowsHelper(Kind kind, Path dataDir) throws IOException {
+    /** The folder with the helper files, ready once per game. */
+    private static Path preparedFolder;
+
+    /**
+     * Puts {@code cap.ps1} and {@code Cap.cs} in place, once, before any helper starts: PowerShell reads
+     * and compiles them, so a file another helper (or another game running this overlay) is using must not
+     * be rewritten. A file is replaced, through a temporary file and an atomic move, only when it differs
+     * from the jar's (an updated overlay); if it is in use and the move fails, the existing one stays.
+     */
+    private static synchronized Path prepareHelper(Path dataDir) throws IOException {
+        if (preparedFolder != null) {
+            return preparedFolder;
+        }
         Path folder = dataDir.resolve("audio");
         Files.createDirectories(folder);
-        // Rewritten every start so an updated overlay brings its own helper.
         for (String name : new String[] {"cap.ps1", "Cap.cs"}) {
+            byte[] content;
             try (InputStream in = AudioCapture.class.getResourceAsStream(name)) {
                 if (in == null) {
                     throw new IOException(name + " is missing from the overlay jar");
                 }
-                Files.copy(in, folder.resolve(name), StandardCopyOption.REPLACE_EXISTING);
+                content = readAll(in);
+            }
+            Path target = folder.resolve(name);
+            if (Files.isRegularFile(target) && Arrays.equals(Files.readAllBytes(target), content)) {
+                continue;
+            }
+            Path temp = Files.createTempFile(folder, name, ".tmp");
+            try {
+                Files.write(temp, content);
+                Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (FileSystemException e) {
+                Files.deleteIfExists(temp);
+                if (!Files.isRegularFile(target)) {
+                    throw e;
+                }
             }
         }
+        preparedFolder = folder;
+        return folder;
+    }
+
+    private static byte[] readAll(InputStream in) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buffer = new byte[1 << 13];
+        for (int n; (n = in.read(buffer)) > 0; ) {
+            out.write(buffer, 0, n);
+        }
+        return out.toByteArray();
+    }
+
+    private static Process windowsHelper(Kind kind, Path dataDir) throws IOException {
+        Path folder = prepareHelper(dataDir);
         String mode = kind == Kind.GAME ? "game" : kind == Kind.REST ? "rest" : "mic";
         return new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-MTA", "-ExecutionPolicy", "Bypass",
                 "-File", folder.resolve("cap.ps1").toString(), mode, pid()).start();
