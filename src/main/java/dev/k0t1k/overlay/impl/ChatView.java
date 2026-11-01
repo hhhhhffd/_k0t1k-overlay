@@ -196,7 +196,7 @@ final class ChatView {
                 scroll = maxScroll - t * maxScroll;
             }
         }
-        ui.round(x, thumbY, 5, thumbH, 2.5f, draggingBar || hot ? 0xff4a3f6e : 0xff332b4d);
+        ui.round(x, thumbY, 5, thumbH, 2.5f, draggingBar || hot ? Ui.THUMB_HOT : Ui.THUMB);
     }
 
     private int firstVisible(float viewTop) {

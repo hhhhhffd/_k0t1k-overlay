@@ -1008,7 +1008,7 @@ final class Recorder {
         boolean left = options.hud && options.hudX >= 0.5f && options.hudY < 0.5f;
         float bw = tw + 38;
         float x = left ? 12 : w - bw - 12;
-        ui.round(x, 12, bw, 26, 13, 0xcc13101c);
+        ui.round(x, 12, bw, 26, 13, Theme.alpha(Ui.SURFACE, 0xcc));
         if (System.currentTimeMillis() / 600 % 2 == 0) {
             ui.round(x + 10, 21, 8, 8, 4, 0xffed4245);
         }

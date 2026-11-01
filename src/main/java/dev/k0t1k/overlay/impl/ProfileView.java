@@ -45,10 +45,10 @@ final class ProfileView {
                 continue;
             }
             boolean done = stats.unlocked.contains(a.id);
-            ui.panel(tx, ty, tileW, tileH, 10, done ? 0x26a259f7 : Ui.BASE, done ? 0xff6d3fc0 : Ui.LINE);
+            ui.panel(tx, ty, tileW, tileH, 10, done ? Ui.ACCENT_SOFT : Ui.BASE, done ? Ui.ACCENT : Ui.LINE);
             ui.round(tx + 12, ty + 11, 28, 28, 8, done ? Ui.ACCENT : Ui.RAISED);
             if (done) {
-                ui.round(tx + 21, ty + 20, 10, 10, 5, 0xffffffff);
+                ui.round(tx + 21, ty + 20, 10, 10, 5, Ui.ACCENT_FG);
             }
             ui.textFit(ui.bold, 13, tx + 52, ty + 8, tileW - 64, done ? Ui.FG : Ui.MUTED, strings.get("ach." + a.id));
             String detail = strings.get("ach." + a.id + ".d");

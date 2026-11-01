@@ -9,19 +9,74 @@ import java.util.List;
  * gathered between frames is consumed by the widgets of the next frame.
  */
 final class Ui {
-    // Palette of the launcher's default dark theme (apps/app/src/style.css).
-    static final int BASE = 0xff0b0910;
-    static final int SURFACE = 0xff13101c;
-    static final int RAISED = 0xff1b1728;
-    static final int HOVER = 0xff251f37;
-    static final int LINE = 0xff2b2542;
-    static final int FG = 0xffece8f6;
-    static final int MUTED = 0xffa199ba;
-    static final int FAINT = 0xff6d6588;
-    static final int ACCENT = 0xffa259f7;
-    static final int OK = 0xff4ade80;
-    static final int WARN = 0xfffbbf24;
-    static final int DANGER = 0xfff87171;
+    // The palette: the launcher's tokens plus the shades derived from them. It follows the launcher's
+    // theme (see Theme), so it is swapped by apply() on the render thread, never changed elsewhere.
+    static int BASE;
+    static int SURFACE;
+    static int RAISED;
+    static int HOVER;
+    static int LINE;
+    static int FG;
+    static int MUTED;
+    static int FAINT;
+    static int ACCENT;
+    static int OK;
+    static int WARN;
+    static int DANGER;
+    /** Text and marks on top of {@link #ACCENT}. */
+    static int ACCENT_FG;
+    static int ACCENT_HOVER;
+    /** A tinted fill for the active tab or pill and for selected list items. */
+    static int ACCENT_SOFT;
+    static int ACCENT_SELECT;
+    /** Border of a hovered control. */
+    static int LINE_HOVER;
+    /** Translucent fills: the content card and top bar, tooltips and toasts. */
+    static int CARD;
+    static int POPUP;
+    static int DANGER_SOFT;
+    /** Scrollbar thumb, resting and dragged; and faint chart gridlines. */
+    static int THUMB;
+    static int THUMB_HOT;
+    static int GRID;
+    /** What dims the game behind the open overlay, and the lighter dim of the HUD editor. */
+    static int VEIL;
+    static int VEIL_LIGHT;
+
+    static {
+        apply(Theme.DEFAULT);
+    }
+
+    /** Switches every colour to the theme. */
+    static void apply(Theme t) {
+        BASE = t.base;
+        SURFACE = t.surface;
+        RAISED = t.raised;
+        HOVER = t.hover;
+        LINE = t.line;
+        FG = t.fg;
+        MUTED = t.muted;
+        FAINT = t.faint;
+        ACCENT = t.accent;
+        OK = t.ok;
+        WARN = t.warn;
+        DANGER = t.danger;
+        ACCENT_FG = t.accentFg;
+        ACCENT_HOVER = Theme.mix(t.accent, 0xffffffff, 0.14f);
+        ACCENT_SOFT = Theme.alpha(t.accent, 0x2e);
+        ACCENT_SELECT = Theme.alpha(t.accent, 0x66);
+        LINE_HOVER = Theme.mix(t.line, t.accent, 0.4f);
+        CARD = Theme.alpha(t.surface, 0xf5);
+        POPUP = Theme.alpha(t.raised, 0xf2);
+        DANGER_SOFT = Theme.alpha(t.danger, 0x29);
+        THUMB = Theme.mix(t.faint, t.line, 0.45f);
+        THUMB_HOT = t.faint;
+        GRID = Theme.alpha(t.fg, 0x40);
+        // A light theme still darkens the game: the veil is a deep tint of the theme's own base.
+        int veil = Theme.mix(t.base, 0xff000000, t.dark ? 0.4f : 0.85f);
+        VEIL = Theme.alpha(veil, t.dark ? 0xc0 : 0xb8);
+        VEIL_LIGHT = Theme.alpha(veil, 0x80);
+    }
 
     final Batch batch;
     final Font regular;
@@ -382,10 +437,10 @@ final class Ui {
     /** A button; returns true when clicked. */
     boolean button(float x, float y, float w, float h, String label, boolean primary) {
         boolean hot = hover(x, y, w, h);
-        int fill = primary ? (hot ? 0xffb678ff : ACCENT) : (hot ? HOVER : RAISED);
-        panel(x, y, w, h, 7, fill, primary ? fill : LINE);
+        int fill = primary ? (hot ? ACCENT_HOVER : ACCENT) : (hot ? HOVER : RAISED);
+        panel(x, y, w, h, 8, fill, primary ? fill : (hot ? LINE_HOVER : LINE));
         float tw = measure(bold, 13, label);
-        text(bold, 13, x + (w - tw) / 2, y + (h - lineHeight(bold, 13)) / 2, primary ? 0xffffffff : FG, label);
+        text(bold, 13, x + (w - tw) / 2, y + (h - lineHeight(bold, 13)) / 2, primary ? ACCENT_FG : FG, label);
         return clickedIn(x, y, w, h);
     }
 
@@ -398,12 +453,26 @@ final class Ui {
     boolean pill(float x, float y, float w, float h, String label, boolean active) {
         boolean hot = hover(x, y, w, h);
         if (active) {
-            round(x, y, w, h, h / 2, 0x33a259f7);
+            round(x, y, w, h, 7, ACCENT_SOFT);
         } else if (hot) {
-            round(x, y, w, h, h / 2, HOVER);
+            round(x, y, w, h, 7, HOVER);
         }
         float tw = measure(bold, 13, label);
-        text(bold, 13, x + (w - tw) / 2, y + (h - lineHeight(bold, 13)) / 2, active ? 0xffd4b0ff : MUTED, label);
+        text(bold, 13, x + (w - tw) / 2, y + (h - lineHeight(bold, 13)) / 2, active ? ACCENT : (hot ? FG : MUTED), label);
+        return clickedIn(x, y, w, h);
+    }
+
+    /**
+     * A section link of the top bar, like the launcher's: upper case, accent with a 3 unit underline
+     * when active, accent on hover. The underline sits on the bottom edge of the box.
+     */
+    boolean tab(float x, float y, float w, float h, String label, boolean active) {
+        boolean hot = hover(x, y, w, h);
+        float tw = measure(bold, 13, label);
+        text(bold, 13, x + (w - tw) / 2, y + (h - lineHeight(bold, 13)) / 2, active || hot ? ACCENT : FG, label);
+        if (active) {
+            rect(x, y + h - 3, w, 3, ACCENT);
+        }
         return clickedIn(x, y, w, h);
     }
 
@@ -436,7 +505,8 @@ final class Ui {
         float tx = x + t * (w - thumb);
         round(x, y + h / 2 - 2, w, 4, 2, LINE);
         round(x, y + h / 2 - 2, tx - x + thumb / 2, 4, 2, ACCENT);
-        round(tx, y + (h - thumb) / 2, thumb, thumb, thumb / 2, dragging == id || hot ? 0xffd4b0ff : FG);
+        round(tx, y + (h - thumb) / 2, thumb, thumb, thumb / 2, dragging == id || hot ? ACCENT_HOVER : ACCENT);
+        round(tx + 4, y + (h - thumb) / 2 + 4, thumb - 8, thumb - 8, (thumb - 8) / 2, ACCENT_FG);
         return value;
     }
 
@@ -444,9 +514,9 @@ final class Ui {
         float box = 16;
         float tw = measure(regular, 13, label);
         boolean hot = hover(x, y, box + 8 + tw, box);
-        panel(x, y, box, box, 4, value ? ACCENT : (hot ? HOVER : RAISED), value ? ACCENT : LINE);
+        panel(x, y, box, box, 4, value ? ACCENT : BASE, value ? ACCENT : (hot ? LINE_HOVER : LINE));
         if (value) {
-            round(x + 4.5f, y + 4.5f, 7, 7, 2, 0xffffffff);
+            round(x + 4.5f, y + 4.5f, 7, 7, 2, ACCENT_FG);
         }
         text(regular, 13, x + box + 8, y + (box - lineHeight(regular, 13)) / 2, FG, label);
         return clickedIn(x, y, box + 8 + tw, box) ? !value : value;
@@ -459,7 +529,7 @@ final class Ui {
     boolean field(TextEdit edit, float x, float y, float w, float h, boolean multiline, String placeholder) {
         boolean focused = focus == edit;
         boolean hot = hover(x, y, w, h);
-        panel(x, y, w, h, 7, focused ? BASE : RAISED, focused ? 0xff7c4fc0 : (hot ? 0xff3a3256 : LINE));
+        panel(x, y, w, h, 8, BASE, focused ? ACCENT : (hot ? LINE_HOVER : LINE));
 
         float size = 14;
         float lh = lineHeight(regular, size);
@@ -528,7 +598,7 @@ final class Ui {
                 int b = Math.min(selEnd, line[1]);
                 float sx = ox + measure(regular, size, text, line[0], a);
                 float sw = measure(regular, size, text, a, b) + (selEnd > line[1] && i < lines.size() - 1 ? 4 : 0);
-                rect(sx, ly, sw, lh, 0x666d3fc0);
+                rect(sx, ly, sw, lh, ACCENT_SELECT);
             }
             text(regular, size, ox, ly, FG, text, line[0], line[1]);
         }

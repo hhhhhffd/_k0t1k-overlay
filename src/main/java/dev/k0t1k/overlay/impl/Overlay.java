@@ -1,6 +1,7 @@
 package dev.k0t1k.overlay.impl;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -197,6 +198,7 @@ public final class Overlay implements Function<Object[], Object> {
         chat.start();
         notes.load();
         screenshots.start();
+        watchTheme();
         Runtime.getRuntime().addShutdownHook(new Thread(this::saveOnExit, "k0t1k-overlay-exit"));
         toast(ToastKind.WELCOME, strings.get("welcome"), strings.get("welcome.body"));
         log("started, data in " + options.dataDir);
@@ -392,6 +394,35 @@ public final class Overlay implements Function<Object[], Object> {
                     .newInstance(this);
         }
         return vk;
+    }
+
+    /**
+     * Applies the launcher's theme (see {@link Theme}) when the overlay starts and whenever the file
+     * changes. The check is a timestamp comparison on the io thread every two seconds; the new palette
+     * is swapped in on the render thread.
+     */
+    private void watchTheme() {
+        Path file = options.dataDir.resolve(Theme.FILE);
+        long[] seen = {-1};
+        ioThread.scheduleWithFixedDelay(() -> {
+            try {
+                long modified = Files.getLastModifiedTime(file).toMillis();
+                if (modified == seen[0]) {
+                    return;
+                }
+                seen[0] = modified;
+                Theme theme = Theme.load(file);
+                if (theme == null) {
+                    log("ignoring an invalid " + Theme.FILE + "; the previous colours stay");
+                    return;
+                }
+                render.execute(() -> Ui.apply(theme));
+            } catch (java.nio.file.NoSuchFileException e) {
+                // no theme from the launcher (yet): the default palette stays
+            } catch (IOException | RuntimeException e) {
+                report(e);
+            }
+        }, 0, 2, java.util.concurrent.TimeUnit.SECONDS);
     }
 
     private static java.util.concurrent.ThreadFactory daemon(String name) {
@@ -1144,11 +1175,11 @@ public final class Overlay implements Function<Object[], Object> {
     }
 
     private void drawOverlay(float w, float h) {
-        ui.rect(0, 0, w, h, 0xc0060509);
+        ui.rect(0, 0, w, h, Ui.VEIL);
 
         // Top bar: brand, tabs, clock.
         float barH = 48;
-        ui.rect(0, 0, w, barH, 0xf013101c);
+        ui.rect(0, 0, w, barH, Ui.CARD);
         ui.rect(0, barH, w, 1, Ui.LINE);
         String clock = LocalTime.now().format(CLOCK);
         long minutes = (System.currentTimeMillis() - started) / 60000;
@@ -1160,7 +1191,7 @@ public final class Overlay implements Function<Object[], Object> {
 
         float labelsW = 0;
         for (String tabKey : TABS) {
-            labelsW += ui.measure(ui.bold, 13, strings.get(tabKey));
+            labelsW += ui.measure(ui.bold, 13, strings.get(tabKey).toUpperCase(Locale.ROOT));
         }
         // Fit the tabs between the brand and the clock: tighter padding first, then drop the
         // subtitle and the session time, then the clock; a strip still too wide scrolls.
@@ -1173,7 +1204,7 @@ public final class Overlay implements Function<Object[], Object> {
             tabPad = stage == 0 ? 32 : stage == 1 ? 18 : 10;
             left = 18 + brandW + (stage < 3 ? subtitleW : 0) + 16;
             right = w - (stage < 4 ? 18 + Math.max(clockW, stage < 3 ? sessionW : 0) + 16 : 18);
-            stripW = labelsW + TABS.length * tabPad + (TABS.length - 1) * 6;
+            stripW = labelsW + TABS.length * tabPad;
             if (stripW <= right - left || stage == 4) {
                 break;
             }
@@ -1204,14 +1235,14 @@ public final class Overlay implements Function<Object[], Object> {
             ui.clip(left, 0, room, barH);
         }
         for (int i = 0; i < TABS.length; i++) {
-            String label = strings.get(TABS[i]);
+            String label = strings.get(TABS[i]).toUpperCase(Locale.ROOT);
             float tabW = ui.measure(ui.bold, 13, label) + tabPad;
-            if (tx + tabW > left && tx < right && ui.pill(tx, 9, tabW, 30, label, tab == i)) {
+            if (tx + tabW > left && tx < right && ui.tab(tx, 0, tabW, barH, label, tab == i)) {
                 tab = i;
                 ui.focus = null;
                 keyCapture = null;
             }
-            tx += tabW + 6;
+            tx += tabW;
         }
         if (stripW > room) {
             ui.unclip();
@@ -1222,7 +1253,7 @@ public final class Overlay implements Function<Object[], Object> {
         float cx = (w - cardW) / 2;
         float cy = barH + 16;
         float cardH = h - cy - 34;
-        ui.panel(cx, cy, cardW, cardH, 14, 0xf513101c, Ui.LINE);
+        ui.panel(cx, cy, cardW, cardH, 12, Ui.CARD, Ui.LINE);
         float pad = 18;
         float x = cx + pad;
         float y = cy + pad;
@@ -1388,7 +1419,7 @@ public final class Overlay implements Function<Object[], Object> {
                 toast.hovered = true;
             }
             toast.box = new float[] {x, ty, tw, th};
-            ui.panel(x, ty, tw, th, 10, 0xf21b1728, 0xff3a3256);
+            ui.panel(x, ty, tw, th, 10, Ui.POPUP, Ui.LINE_HOVER);
             ui.round(x + 1, ty + 10, 3, th - 20, 1.5f, Ui.ACCENT);
             ui.text(ui.bold, 13, x + 14, ty + 10, Ui.FG, toast.title);
             for (int l = 0; l < shown; l++) {
