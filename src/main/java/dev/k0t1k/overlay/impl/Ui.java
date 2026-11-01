@@ -31,9 +31,22 @@ final class Ui {
     // Input of the current frame.
     float mouseX = -1;
     float mouseY = -1;
+    /** The left button, which all widgets use; {@code clicked} and {@code released} last one frame. */
     boolean mouseDown;
     boolean clicked;
     boolean released;
+    /**
+     * The other buttons, for content that forwards them (the browser page). Like {@link #clicked},
+     * the flags last one frame; {@link #pressedButton} and {@link #releasedButton} are the last
+     * button (GLFW numbering, see {@link Keys#MOUSE_LEFT}) pressed or released this frame, or -1.
+     */
+    boolean rightClicked;
+    boolean middleClicked;
+    boolean backClicked;
+    boolean forwardClicked;
+    int pressedButton = -1;
+    int releasedButton = -1;
+    private final boolean[] buttonDown = new boolean[Keys.MOUSE_FORWARD + 1];
     boolean doubleClicked;
     float scrollY;
     final List<int[]> keys = new ArrayList<>(); // {key, mods} for presses and repeats
@@ -60,8 +73,30 @@ final class Ui {
     }
 
     void onButton(int button, boolean press) {
-        if (button != 0) {
+        if (button < 0 || button >= buttonDown.length) {
             return;
+        }
+        buttonDown[button] = press;
+        if (press) {
+            pressedButton = button;
+        } else {
+            releasedButton = button;
+        }
+        switch (button) {
+            case Keys.MOUSE_RIGHT:
+                rightClicked |= press;
+                return;
+            case Keys.MOUSE_MIDDLE:
+                middleClicked |= press;
+                return;
+            case Keys.MOUSE_BACK:
+                backClicked |= press;
+                return;
+            case Keys.MOUSE_FORWARD:
+                forwardClicked |= press;
+                return;
+            default:
+                break;
         }
         if (press) {
             long now = System.currentTimeMillis();
@@ -73,6 +108,11 @@ final class Ui {
             released = true;
             mouseDown = false;
         }
+    }
+
+    /** Whether a button (GLFW numbering) is held. */
+    boolean buttonDown(int button) {
+        return button >= 0 && button < buttonDown.length && buttonDown[button];
     }
 
     void onScroll(double dy) {
@@ -94,6 +134,12 @@ final class Ui {
         }
         clicked = false;
         released = false;
+        rightClicked = false;
+        middleClicked = false;
+        backClicked = false;
+        forwardClicked = false;
+        pressedButton = -1;
+        releasedButton = -1;
         doubleClicked = false;
         clickHandled = false;
         scrollY = 0;
@@ -105,6 +151,7 @@ final class Ui {
     void resetInput() {
         endFrame();
         mouseDown = false;
+        java.util.Arrays.fill(buttonDown, false);
         focus = null;
     }
 

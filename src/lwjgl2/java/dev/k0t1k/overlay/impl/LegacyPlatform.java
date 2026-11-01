@@ -167,6 +167,7 @@ final class LegacyPlatform implements LegacyBackend {
         boolean moved = overlay.cursor(Mouse.getEventX(), Display.getHeight() - 1 - Mouse.getEventY());
         int button = Mouse.getEventButton();
         if (button >= 0) {
+            // Left, right, middle, then the side buttons (back, forward): GLFW's numbering already.
             return overlay.button(button, Mouse.getEventButtonState() ? Keys.PRESS : Keys.RELEASE);
         }
         int wheel = Mouse.getEventDWheel();

@@ -30,6 +30,13 @@ final class Keys {
     static final int MOD_ALT = 4;
     static final int MOD_SUPER = 8;
 
+    /** Mouse buttons, GLFW's numbering; a backend for another window library translates its own. */
+    static final int MOUSE_LEFT = 0;
+    static final int MOUSE_RIGHT = 1;
+    static final int MOUSE_MIDDLE = 2;
+    static final int MOUSE_BACK = 3;
+    static final int MOUSE_FORWARD = 4;
+
     static final int RELEASE = 0;
     static final int PRESS = 1;
     static final int REPEAT = 2;

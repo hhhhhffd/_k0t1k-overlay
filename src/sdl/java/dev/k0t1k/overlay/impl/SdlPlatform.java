@@ -224,7 +224,7 @@ final class SdlPlatform implements SdlBackend {
         return mods;
     }
 
-    /** SDL buttons are 1 left, 2 middle, 3 right; GLFW's are 0 left, 1 right, 2 middle. */
+    /** SDL buttons are 1 left, 2 middle, 3 right, 4 back, 5 forward; GLFW's are 0, 2, 1, 3, 4. */
     private static int mouseButton(byte button) {
         switch (button) {
             case 1:
@@ -233,6 +233,10 @@ final class SdlPlatform implements SdlBackend {
                 return 2;
             case 3:
                 return 1;
+            case 4:
+                return Keys.MOUSE_BACK;
+            case 5:
+                return Keys.MOUSE_FORWARD;
             default:
                 return button;
         }
