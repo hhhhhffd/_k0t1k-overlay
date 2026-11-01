@@ -96,7 +96,129 @@ public final class OverlayBrowser extends CefBrowser_N implements CefRenderHandl
     private static final int PIXELS_PER_LINE = 100;
 
     public void key(int id, int keyCode, char keyChar, int modifiers) {
-        sendKeyEvent(new KeyEvent(SOURCE, id, System.currentTimeMillis(), modifiers, keyCode, keyChar));
+        char chr = keyChar;
+        if (!WINDOWS && id != KeyEvent.KEY_TYPED && chr == KeyEvent.CHAR_UNDEFINED) {
+            // On Linux JCEF takes the key from the key code only for a few keys and from the character
+            // for the rest, so these ones are passed as the X keysym that Chromium maps back.
+            chr = keysym(keyCode, chr);
+        }
+        KeyEvent event = new KeyEvent(SOURCE, id, System.currentTimeMillis(), modifiers, keyCode, chr);
+        if (WINDOWS && id != KeyEvent.KEY_TYPED) {
+            setScancode(event, scancode(keyCode));
+        }
+        sendKeyEvent(event);
+    }
+
+    private static final boolean WINDOWS = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).startsWith("windows");
+    // sun.misc.Unsafe by reflection: --release 8 hides it from the compiler, and no --add-opens is needed.
+    private static final Object UNSAFE;
+    private static final java.lang.reflect.Method PUT_LONG;
+    private static final long SCANCODE_OFFSET;
+
+    static {
+        Object unsafe = null;
+        java.lang.reflect.Method putLong = null;
+        long offset = -1;
+        try {
+            Class<?> type = Class.forName("sun.misc.Unsafe");
+            java.lang.reflect.Field theUnsafe = type.getDeclaredField("theUnsafe");
+            theUnsafe.setAccessible(true);
+            unsafe = theUnsafe.get(null);
+            offset = (Long) type.getMethod("objectFieldOffset", java.lang.reflect.Field.class)
+                    .invoke(unsafe, KeyEvent.class.getDeclaredField("scancode"));
+            putLong = type.getMethod("putLong", Object.class, long.class, long.class);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            System.err.println("[k0t1k-overlay] browser: cannot set key scancodes (" + e + ")");
+            unsafe = null;
+        }
+        UNSAFE = unsafe;
+        PUT_LONG = putLong;
+        SCANCODE_OFFSET = offset;
+    }
+
+    /**
+     * On Windows the native side ignores the key code and maps KeyEvent's private {@code scancode} to a
+     * virtual key; events built by hand have none, so Backspace, Delete and the arrows would do nothing.
+     */
+    private static void setScancode(KeyEvent event, int scancode) {
+        if (UNSAFE == null || scancode == 0) {
+            return;
+        }
+        try {
+            PUT_LONG.invoke(UNSAFE, event, SCANCODE_OFFSET, (long) scancode);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("cannot set the scancode", e);
+        }
+    }
+
+
+    /** Set-1 make codes (extended keys without their E0 prefix) of the AWT key codes the browser sends. */
+    private static int scancode(int vk) {
+        final String top = "QWERTYUIOP";
+        final String home = "ASDFGHJKL";
+        final String bottom = "ZXCVBNM";
+        if (vk >= KeyEvent.VK_A && vk <= KeyEvent.VK_Z) {
+            char c = (char) vk;
+            int i = top.indexOf(c);
+            if (i >= 0) {
+                return 0x10 + i;
+            }
+            i = home.indexOf(c);
+            return i >= 0 ? 0x1E + i : 0x2C + bottom.indexOf(c);
+        }
+        if (vk >= KeyEvent.VK_1 && vk <= KeyEvent.VK_9) {
+            return 0x02 + vk - KeyEvent.VK_1;
+        }
+        if (vk >= KeyEvent.VK_F1 && vk <= KeyEvent.VK_F10) {
+            return 0x3B + vk - KeyEvent.VK_F1;
+        }
+        switch (vk) {
+            case KeyEvent.VK_ESCAPE: return 0x01;
+            case KeyEvent.VK_0: return 0x0B;
+            case KeyEvent.VK_MINUS: return 0x0C;
+            case KeyEvent.VK_EQUALS: return 0x0D;
+            case KeyEvent.VK_BACK_SPACE: return 0x0E;
+            case KeyEvent.VK_TAB: return 0x0F;
+            case KeyEvent.VK_OPEN_BRACKET: return 0x1A;
+            case KeyEvent.VK_CLOSE_BRACKET: return 0x1B;
+            case KeyEvent.VK_ENTER: return 0x1C;
+            case KeyEvent.VK_SEMICOLON: return 0x27;
+            case KeyEvent.VK_QUOTE: return 0x28;
+            case KeyEvent.VK_BACK_QUOTE: return 0x29;
+            case KeyEvent.VK_BACK_SLASH: return 0x2B;
+            case KeyEvent.VK_COMMA: return 0x33;
+            case KeyEvent.VK_PERIOD: return 0x34;
+            case KeyEvent.VK_SLASH: return 0x35;
+            case KeyEvent.VK_SPACE: return 0x39;
+            case KeyEvent.VK_F11: return 0x57;
+            case KeyEvent.VK_F12: return 0x58;
+            case KeyEvent.VK_HOME: return 0x47;
+            case KeyEvent.VK_UP: return 0x48;
+            case KeyEvent.VK_PAGE_UP: return 0x49;
+            case KeyEvent.VK_LEFT: return 0x4B;
+            case KeyEvent.VK_RIGHT: return 0x4D;
+            case KeyEvent.VK_END: return 0x4F;
+            case KeyEvent.VK_DOWN: return 0x50;
+            case KeyEvent.VK_PAGE_DOWN: return 0x51;
+            case KeyEvent.VK_INSERT: return 0x52;
+            case KeyEvent.VK_DELETE: return 0x53;
+            default: return 0;
+        }
+    }
+
+    /** X keysyms of the keys JCEF reads from the character on Linux. */
+    private static char keysym(int vk, char fallback) {
+        if (vk >= KeyEvent.VK_F1 && vk <= KeyEvent.VK_F12) {
+            return (char) (0xFFBE + vk - KeyEvent.VK_F1);
+        }
+        switch (vk) {
+            case KeyEvent.VK_HOME: return 0xFF50;
+            case KeyEvent.VK_PAGE_UP: return 0xFF55;
+            case KeyEvent.VK_PAGE_DOWN: return 0xFF56;
+            case KeyEvent.VK_END: return 0xFF57;
+            case KeyEvent.VK_INSERT: return 0xFF63;
+            default: return fallback;
+        }
     }
 
     /**

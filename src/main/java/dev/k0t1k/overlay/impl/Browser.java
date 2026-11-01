@@ -46,6 +46,8 @@ final class Browser {
     volatile float progress;
     volatile String error = "";
     private volatile BrowserEngine engine;
+    /** {@code CefEngine.create}, kept to open more tabs once the first engine started CEF. */
+    private volatile java.lang.reflect.Method create;
     /** An install or start is under way on the io thread. */
     private volatile boolean busy;
 
@@ -88,8 +90,28 @@ final class Browser {
         return platform == null ? "" : platform[2];
     }
 
+    /** The first engine, which started CEF; null until the browser is ready. */
     BrowserEngine engine() {
         return engine;
+    }
+
+    /** Deletes every site's cookies; false when the browser has not started. */
+    boolean clearCookies() {
+        BrowserEngine current = engine;
+        if (current == null) {
+            return false;
+        }
+        current.clearCookies();
+        return true;
+    }
+
+    /** Opens another engine (a tab) at {@code url}; only once {@link #engine()} is there. */
+    BrowserEngine open(String url) {
+        try {
+            return (BrowserEngine) create.invoke(null, natives.toFile(), root.resolve("profile").toFile(), language, url);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("could not open a browser tab", e);
+        }
     }
 
     /** Installs if needed and starts the engine at {@code url}; progress shows in {@link #state}. */
@@ -337,9 +359,10 @@ final class Browser {
         URLClassLoader loader = new URLClassLoader(jars, Browser.class.getClassLoader());
         Path cache = root.resolve("profile");
         Files.createDirectories(cache);
-        Object engine = Class.forName("dev.k0t1k.overlay.cef.CefEngine", true, loader)
-                .getMethod("create", File.class, File.class, String.class, String.class)
-                .invoke(null, natives.toFile(), cache.toFile(), language, url);
+        java.lang.reflect.Method method = Class.forName("dev.k0t1k.overlay.cef.CefEngine", true, loader)
+                .getMethod("create", File.class, File.class, String.class, String.class);
+        Object engine = method.invoke(null, natives.toFile(), cache.toFile(), language, url);
+        create = method;
         return (BrowserEngine) engine;
     }
 

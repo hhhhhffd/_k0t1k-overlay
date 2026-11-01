@@ -6,6 +6,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.cef.CefApp;
 import org.cef.CefClient;
@@ -14,24 +17,53 @@ import org.cef.SystemBootstrap;
 import org.cef.browser.CefBrowser;
 import org.cef.browser.CefFrame;
 import org.cef.browser.OverlayBrowser;
+import org.cef.callback.CefContextMenuParams;
+import org.cef.callback.CefMenuModel;
+import org.cef.handler.CefContextMenuHandlerAdapter;
 import org.cef.handler.CefDisplayHandlerAdapter;
-import org.cef.handler.CefLifeSpanHandlerAdapter;
 import org.cef.handler.CefLoadHandlerAdapter;
+import org.cef.network.CefCookieManager;
 
 import dev.k0t1k.overlay.impl.BrowserEngine;
 
 /**
- * The overlay's browser on top of JCEF: one off-screen Chromium view. Created by name from the
+ * The overlay's browser on top of JCEF: one off-screen Chromium view (a tab). Created by name from the
  * overlay once JCEF and its natives are downloaded; see {@link #create}.
  */
 public final class CefEngine implements BrowserEngine {
+    private static final String PREFIX = "k0t1k:";
+    /**
+     * Run in every page after it loads. Off screen CEF cancels popups before Java hears of them, so
+     * links meant for a new window and middle or Ctrl clicks are caught here and reported through the
+     * console; it also reports whether anything is playing sound.
+     */
+    private static final String PAGE_SCRIPT = "(function(){if(window.__k0t1k)return;window.__k0t1k=1;"
+            + "function say(s){console.log('" + PREFIX + "'+s);}"
+            + "window.open=function(u){if(u){try{say('open:'+new URL(u,location.href).href);}catch(e){}}return null;};"
+            + "function link(e){var t=e.target;return t&&t.closest?t.closest('a[href]'):null;}"
+            + "document.addEventListener('click',function(e){var a=link(e);if(!a||e.defaultPrevented||!/^https?:/.test(a.href))return;"
+            + "var t=a.target;if(e.ctrlKey||e.metaKey){e.preventDefault();say('background:'+a.href);}"
+            + "else if(t&&t!=='_self'&&t!=='_top'&&t!=='_parent'){e.preventDefault();say('open:'+a.href);}},true);"
+            + "document.addEventListener('auxclick',function(e){var a=link(e);"
+            + "if(e.button===1&&a&&/^https?:/.test(a.href)){e.preventDefault();say('background:'+a.href);}},true);"
+            + "function media(){var n=0;document.querySelectorAll('video,audio').forEach(function(m){"
+            + "if(!m.paused&&!m.ended&&!m.muted&&m.volume>0)n++;});say('media:'+n);}"
+            + "['play','pause','ended','volumechange'].forEach(function(t){document.addEventListener(t,media,true);});})();";
+    /** More than this many unread new-tab requests are dropped, so a page cannot flood the tab bar. */
+    private static final int MAX_OPEN_REQUESTS = 8;
+
     private static CefApp app;
 
     private final CefClient client;
     private final OverlayBrowser browser;
+    private final Queue<String> openRequests = new ConcurrentLinkedQueue<>();
+    private final AtomicReference<String[]> contextMenu = new AtomicReference<>();
     private volatile String url = "";
     private volatile String title = "";
     private volatile boolean loading;
+    private volatile boolean fullscreen;
+    private volatile boolean playing;
+    private boolean visible = true;
 
     private CefEngine(CefClient client, String start) {
         this.client = client;
@@ -48,25 +80,59 @@ public final class CefEngine implements BrowserEngine {
             public void onTitleChange(CefBrowser b, String newTitle) {
                 title = newTitle == null ? "" : newTitle;
             }
+
+            @Override
+            public void onFullscreenModeChange(CefBrowser b, boolean on) {
+                fullscreen = on;
+            }
+
+            @Override
+            public boolean onConsoleMessage(CefBrowser b, CefSettings.LogSeverity level, String message, String source, int line) {
+                if (message == null || !message.startsWith(PREFIX)) {
+                    return false;
+                }
+                String report = message.substring(PREFIX.length());
+                if (report.startsWith("media:")) {
+                    playing = !report.equals("media:0");
+                } else if (openRequests.size() < MAX_OPEN_REQUESTS) {
+                    openRequests.add(report);
+                }
+                return true;
+            }
         });
         client.addLoadHandler(new CefLoadHandlerAdapter() {
             @Override
             public void onLoadingStateChange(CefBrowser b, boolean isLoading, boolean canGoBack, boolean canGoForward) {
                 loading = isLoading;
             }
-        });
-        client.addLifeSpanHandler(new CefLifeSpanHandlerAdapter() {
+
             @Override
-            public boolean onBeforePopup(CefBrowser b, CefFrame frame, String target, String name) {
-                // No windows to pop up into: open links meant for a new tab in this view instead.
-                if (target != null && !target.isEmpty()) {
-                    b.loadURL(target);
+            public void onLoadEnd(CefBrowser b, CefFrame frame, int httpStatusCode) {
+                if (frame != null) {
+                    frame.executeJavaScript(PAGE_SCRIPT, frame.getURL(), 0);
                 }
-                return true;
+            }
+        });
+        client.addContextMenuHandler(new CefContextMenuHandlerAdapter() {
+            @Override
+            public void onBeforeContextMenu(CefBrowser b, CefFrame frame, CefContextMenuParams params, CefMenuModel model) {
+                // The native menu cannot show off screen; the overlay draws its own from these.
+                boolean image = params.getMediaType() == CefContextMenuParams.MediaType.CM_MEDIATYPE_IMAGE;
+                contextMenu.set(new String[] {
+                    Integer.toString(params.getXCoord()), Integer.toString(params.getYCoord()),
+                    nonNull(params.getLinkUrl()), image ? nonNull(params.getSourceUrl()) : "",
+                    nonNull(params.getSelectionText()), params.isEditable() ? "1" : "0",
+                    Integer.toString(params.getEditStateFlags()),
+                });
+                model.clear();
             }
         });
         browser = new OverlayBrowser(client, start, null);
         browser.createImmediately();
+    }
+
+    private static String nonNull(String value) {
+        return value == null ? "" : value;
     }
 
     /**
@@ -187,6 +253,69 @@ public final class CefEngine implements BrowserEngine {
     @Override
     public long frame(long seen, ByteBuffer out, int[] size) {
         return browser.copyFrame(seen, out, size);
+    }
+
+    @Override
+    public void zoom(double level) {
+        browser.setZoomLevel(level);
+    }
+
+    @Override
+    public void visible(boolean show) {
+        if (show != visible) {
+            visible = show;
+            browser.setWindowlessFrameRate(show ? 30 : 1);
+        }
+    }
+
+    @Override
+    public boolean fullscreen() {
+        return fullscreen;
+    }
+
+    @Override
+    public void exitFullscreen() {
+        browser.executeJavaScript("document.exitFullscreen&&document.exitFullscreen()", url, 0);
+    }
+
+    @Override
+    public boolean playing() {
+        return playing;
+    }
+
+    @Override
+    public String pollOpenRequest() {
+        return openRequests.poll();
+    }
+
+    @Override
+    public String[] pollContextMenu() {
+        return contextMenu.getAndSet(null);
+    }
+
+    @Override
+    public void command(int command) {
+        CefFrame frame = browser.getFocusedFrame();
+        if (frame == null) {
+            frame = browser.getMainFrame();
+        }
+        if (frame == null) {
+            return;
+        }
+        switch (command) {
+            case UNDO: frame.undo(); break;
+            case REDO: frame.redo(); break;
+            case CUT: frame.cut(); break;
+            case COPY: frame.copy(); break;
+            case PASTE: frame.paste(); break;
+            case SELECT_ALL: frame.selectAll(); break;
+            default: break;
+        }
+    }
+
+    @Override
+    public void clearCookies() {
+        CefCookieManager.getGlobalManager().deleteCookies("", "");
     }
 
     @Override
