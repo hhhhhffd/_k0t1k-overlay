@@ -74,6 +74,9 @@ public interface BrowserEngine {
      */
     String[] pollContextMenu();
 
+    /** How many requests of the current page the filters cancelled. */
+    int blocked();
+
     void command(int command);
 
     /** Deletes the cookies of every site (logins included). */

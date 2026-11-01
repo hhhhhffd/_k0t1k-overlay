@@ -115,6 +115,14 @@ final class Options {
     /** The search engine for the address bar: a key of {@code BrowserView.ENGINES}. */
     String browserSearch = "google";
     boolean bookmarksBar = true;
+    /** Page protection (see {@link Protection}); read on Chromium's threads, hence volatile. */
+    volatile boolean protectBlock = true;
+    volatile boolean protectCosmetic = true;
+    volatile boolean protectCookies = true;
+    volatile boolean protectYoutube = true;
+    volatile boolean protectDark = true;
+    /** Whether links the game opens go to the overlay's browser instead of the system's. */
+    volatile boolean linksInOverlay = true;
     /** Domains (comma separated) whose cookies "Import sign-ins" is allowed to copy in. */
     String browserImportAllowlist = String.join(", ", BrowserLogins.DEFAULT_ALLOWLIST);
     /** The launcher's interface zoom in percent, or 0 when it is on automatic. */
@@ -222,6 +230,12 @@ final class Options {
         browserHome = saved.getProperty("browserHome", browserHome);
         browserSearch = saved.getProperty("browserSearch", browserSearch);
         bookmarksBar = Boolean.parseBoolean(saved.getProperty("bookmarksBar", "true"));
+        protectBlock = Boolean.parseBoolean(saved.getProperty("protectBlock", "true"));
+        protectCosmetic = Boolean.parseBoolean(saved.getProperty("protectCosmetic", "true"));
+        protectCookies = Boolean.parseBoolean(saved.getProperty("protectCookies", "true"));
+        protectYoutube = Boolean.parseBoolean(saved.getProperty("protectYoutube", "true"));
+        protectDark = Boolean.parseBoolean(saved.getProperty("protectDark", "true"));
+        linksInOverlay = Boolean.parseBoolean(saved.getProperty("linksInOverlay", "true"));
         browserImportAllowlist = saved.getProperty("browserImportAllowlist", browserImportAllowlist);
         fakeHardware = Boolean.parseBoolean(saved.getProperty("fakeHardware", "false"));
         fakeCpu = saved.getProperty("fakeCpu", fakeCpu);
@@ -278,6 +292,12 @@ final class Options {
         snapshot.setProperty("browserHome", browserHome);
         snapshot.setProperty("browserSearch", browserSearch);
         snapshot.setProperty("bookmarksBar", Boolean.toString(bookmarksBar));
+        snapshot.setProperty("protectBlock", Boolean.toString(protectBlock));
+        snapshot.setProperty("protectCosmetic", Boolean.toString(protectCosmetic));
+        snapshot.setProperty("protectCookies", Boolean.toString(protectCookies));
+        snapshot.setProperty("protectYoutube", Boolean.toString(protectYoutube));
+        snapshot.setProperty("protectDark", Boolean.toString(protectDark));
+        snapshot.setProperty("linksInOverlay", Boolean.toString(linksInOverlay));
         snapshot.setProperty("browserImportAllowlist", browserImportAllowlist);
         snapshot.setProperty("fakeHardware", Boolean.toString(fakeHardware));
         snapshot.setProperty("fakeCpu", fakeCpu);

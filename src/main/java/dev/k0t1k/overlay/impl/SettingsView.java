@@ -344,7 +344,62 @@ final class SettingsView {
                     strings.get(clearFailed ? "settings.browserStopped" : "settings.browserCleared"));
         }
         y += 48;
+        y = linksAndProtection(ui, x, y, w);
         return browserImportSection(ui, x, y, w);
+    }
+
+    /** Where the game's links open, and the page protection switches with the state of the filter lists. */
+    private float linksAndProtection(Ui ui, float x, float y, float w) {
+        String links = strings.get("settings.browserLinks");
+        ui.text(ui.regular, 13, x, y + 4, Ui.MUTED, links);
+        float px = x + ui.measure(ui.regular, 13, links) + 16;
+        String[] names = {strings.get("settings.linksOverlay"), strings.get("settings.linksSystem")};
+        for (int i = 0; i < names.length; i++) {
+            float pw = ui.measure(ui.bold, 13, names[i]) + 20;
+            if (ui.pill(px, y, pw, 26, names[i], (i == 0) == options.linksInOverlay)) {
+                options.linksInOverlay = i == 0;
+                changed();
+            }
+            px += pw + 4;
+        }
+        y += 48;
+        ui.text(ui.bold, 14, x, y, Ui.FG, strings.get("settings.protection"));
+        y += 24;
+        ui.textFit(ui.regular, 12, x, y, w, Ui.FAINT, strings.get("settings.protectHint"));
+        y += 26;
+        boolean block = ui.checkbox(x, y, strings.get("settings.protectBlock"), options.protectBlock);
+        y += 28;
+        boolean cosmetic = ui.checkbox(x, y, strings.get("settings.protectCosmetic"), options.protectCosmetic);
+        y += 28;
+        boolean cookies = ui.checkbox(x, y, strings.get("settings.protectCookies"), options.protectCookies);
+        y += 28;
+        boolean youtube = ui.checkbox(x, y, strings.get("settings.protectYoutube"), options.protectYoutube);
+        y += 28;
+        boolean dark = ui.checkbox(x, y, strings.get("settings.protectDark"), options.protectDark);
+        y += 32;
+        if (block != options.protectBlock || cosmetic != options.protectCosmetic || cookies != options.protectCookies
+                || youtube != options.protectYoutube || dark != options.protectDark) {
+            options.protectBlock = block;
+            options.protectCosmetic = cosmetic;
+            options.protectCookies = cookies;
+            options.protectYoutube = youtube;
+            options.protectDark = dark;
+            changed();
+        }
+        Protection protection = overlay.protection();
+        for (Protection.Info info : protection.status()) {
+            String state = info.updated == 0 ? strings.get("settings.protectMissing") : Protection.date(info.updated);
+            String line = strings.format("settings.protectList", info.name, info.network, info.cosmetic, info.scriptlets, state);
+            ui.textFit(ui.regular, 12, x, y, w, info.error.isEmpty() ? Ui.FAINT : Ui.DANGER, line);
+            y += 18;
+        }
+        y += 8;
+        boolean updating = protection.updating();
+        String update = strings.get(updating ? "settings.protectUpdating" : "settings.protectUpdate");
+        if (ui.button(x, y, ui.buttonWidth(update), 32, update, false) && !updating) {
+            protection.updateNow();
+        }
+        return y + 48;
     }
 
     /** "Import sign-ins": an allowlist, the detected browsers and profiles as pills, and an import button. */

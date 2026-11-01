@@ -56,8 +56,10 @@ final class Browser {
     private final Executor io;
     private final String language;
     private final String[] platform;
+    private final Protection protection;
 
-    Browser(Path dataDir, Executor io, String language) {
+    Browser(Path dataDir, Executor io, String language, Protection protection) {
+        this.protection = protection;
         this.root = dataDir.resolve("browser");
         this.natives = root.resolve("cef-152.0.6");
         this.io = io;
@@ -108,7 +110,8 @@ final class Browser {
     /** Opens another engine (a tab) at {@code url}; only once {@link #engine()} is there. */
     BrowserEngine open(String url) {
         try {
-            return (BrowserEngine) create.invoke(null, natives.toFile(), root.resolve("profile").toFile(), language, url);
+            return (BrowserEngine) create.invoke(null, natives.toFile(), root.resolve("profile").toFile(), language, url,
+                    protection.blocker(), protection.scripts());
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("could not open a browser tab", e);
         }
@@ -120,6 +123,7 @@ final class Browser {
             return;
         }
         busy = true;
+        protection.start();
         boolean install = !Files.exists(natives.resolve(".installed"));
         state = install ? State.INSTALLING : State.STARTING;
         progress = 0;
@@ -360,8 +364,10 @@ final class Browser {
         Path cache = root.resolve("profile");
         Files.createDirectories(cache);
         java.lang.reflect.Method method = Class.forName("dev.k0t1k.overlay.cef.CefEngine", true, loader)
-                .getMethod("create", File.class, File.class, String.class, String.class);
-        Object engine = method.invoke(null, natives.toFile(), cache.toFile(), language, url);
+                .getMethod("create", File.class, File.class, String.class, String.class,
+                        java.util.function.Predicate.class, java.util.function.BiFunction.class);
+        Object engine = method.invoke(null, natives.toFile(), cache.toFile(), language, url,
+                protection.blocker(), protection.scripts());
         create = method;
         return (BrowserEngine) engine;
     }

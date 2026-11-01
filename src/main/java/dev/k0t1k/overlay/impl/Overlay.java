@@ -81,6 +81,7 @@ public final class Overlay implements Function<Object[], Object> {
     /** Set while the settings wait for a key to bind; receives the combination, or 0 to cancel. */
     private java.util.function.IntConsumer keyCapture;
     private final CrashGuard crashGuard;
+    private final Protection protection;
     private final Browser browser;
     private final BrowserView browserView;
     private long lastInput = System.currentTimeMillis();
@@ -180,8 +181,9 @@ public final class Overlay implements Function<Object[], Object> {
         ffmpeg = new Ffmpeg(options, recordThread);
         recorder = new Recorder(options, ffmpeg, recordThread, render,
                 (title, body) -> render.execute(() -> toast(title, body)), this::report);
-        browser = new Browser(options.dataDir, io, options.lang);
-        browserView = new BrowserView(browser, strings, this, io);
+        protection = new Protection(options, options.dataDir, io, this::report);
+        browser = new Browser(options.dataDir, io, options.lang, protection);
+        browserView = new BrowserView(browser, strings, this, io, protection);
         crashGuard = new CrashGuard(options.dataDir);
         crashGuard.install();
         chat.onNew = this::onChat;
@@ -268,6 +270,11 @@ public final class Overlay implements Function<Object[], Object> {
                 case "_getCpuInfo":
                 case "glGetString":
                     return hardware.exit(method, args);
+                // Links the game opens: the process that would open the system browser, or the SDL call
+                case "start":
+                case "browse":
+                case "SDL_OpenURL":
+                    return openedLink(method, args, exit);
                 case "vkCreateSwapchainKHR":
                 case "vkDestroySwapchainKHR":
                 case "vkGetDeviceQueue":
@@ -283,6 +290,61 @@ public final class Overlay implements Function<Object[], Object> {
             fail(e);
             return null;
         }
+    }
+
+    /** Set between the enter and exit hooks of a skipped SDL_OpenURL, so the game is told it worked. */
+    private final ThreadLocal<Boolean> sdlOpened = new ThreadLocal<>();
+
+    /**
+     * ProcessBuilder.start, Desktop.browse and SDL_OpenURL: when the game opens a web address and the
+     * player wants those in the overlay, the launch is made harmless and the address is opened in a tab.
+     * Never touches the overlay's own launches ({@link Links#OWN}) or anything that is not a web address.
+     */
+    private Object openedLink(String method, Object[] args, boolean exit) {
+        if (exit) {
+            Boolean opened = sdlOpened.get();
+            sdlOpened.remove();
+            return opened;
+        }
+        if (!options.linksInOverlay || Links.OWN.get() || !linksUsable()) {
+            return null;
+        }
+        String url;
+        switch (method) {
+            case "start":
+                url = Links.openedAddress(((ProcessBuilder) args[0]).command());
+                if (url != null) {
+                    ((ProcessBuilder) args[0]).command(Links.harmless());
+                }
+                break;
+            case "browse":
+                url = Links.webAddress(String.valueOf(args[0]));
+                break;
+            default:
+                url = Links.webAddress(Links.text(args[0]));
+                break;
+        }
+        if (url == null) {
+            return null;
+        }
+        render.execute(() -> openLink(url));
+        if (method.equals("SDL_OpenURL")) {
+            sdlOpened.set(Boolean.TRUE);
+        }
+        return method.equals("start") ? null : Boolean.TRUE;
+    }
+
+    /** The browser is installed (or running) and the renderer can draw its pictures. */
+    private boolean linksUsable() {
+        return imagesSupported() && (browser.state == Browser.State.READY || browser.state == Browser.State.STARTING);
+    }
+
+    /** Shows the Browser tab with {@code url} in a new tab of its own. */
+    private void openLink(String url) {
+        tab = 1;
+        ui.focus = null;
+        setOpen(true);
+        browserView.openExternal(url);
     }
 
     private SdlBackend sdl() throws ReflectiveOperationException {
@@ -509,6 +571,10 @@ public final class Overlay implements Function<Object[], Object> {
             message += " " + strings.format("settings.browserImportSkipped", result.undecryptable);
         }
         return message;
+    }
+
+    Protection protection() {
+        return protection;
     }
 
     FakeHardware hardware() {

@@ -74,6 +74,43 @@ button is hidden and deaths are not counted. Advancements are read from the chat
   allowlisted domain list (editable there) from a detected Firefox or Chromium-family profile into the tab, via a hand-written
   read-only SQLite reader (`SqliteReader`, with Firefox's WAL overlay) and `BrowserLogins`'s decryption of Chromium's cookie store
   (DPAPI on Windows, a PBKDF2 fallback key on Linux); Chromium's app-bound `v20` cookies cannot be decrypted at all.
+- **Links from the game.** When Minecraft opens a web address (a clickable chat link, "Give Feedback"), the agent
+  takes it to a new tab of the overlay's browser instead of the system's. Minecraft 1.13 to 26.2 start the handler as a
+  process (`rundll32 url.dll,FileProtocolHandler`, `open` or `xdg-open` through `Runtime.exec`, hence
+  `ProcessBuilder.start`), 1.8 to 1.12 call `java.awt.Desktop.browse` by reflection, 26.3 calls `SDL_OpenURL`. The hooks recognise only
+  exactly those commands with an http(s) address; the process is replaced by a harmless one (`true`, or `cmd /c exit 0`) so
+  the caller still gets a process, and the address is opened on the render thread. The other two calls are skipped. The overlay's
+  own launches (`Links`, for mod pages) are exempt through a thread-local, and so is everything when the browser is not downloaded,
+  has failed, or the renderer cannot draw images (LWJGL 2): the system browser opens those. Settings → Browser picks
+  overlay or system browser. The JDK classes may be loaded before the agent starts, so the agent retransforms them
+  (`Can-Retransform-Classes` in the manifest).
+- **Page protection.** Chrome extensions cannot run here: windowless CEF is always the Alloy runtime, JCEF fixes
+  that style, CEF's extension API was removed in Chromium 128, and uBlock Origin's Manifest V2 build no longer loads
+  in Chromium 152. So the overlay brings its own equivalents, all on by default, each with a switch in Settings → Browser
+  and a per-site shield in the address bar (switches for the site, and how many requests were blocked on the page; exceptions are
+  kept in `<dataDir>/browser/sites.tsv`):
+  - *Ads and trackers* (uBlock Origin / Privacy Badger): `NetFilter` reads network rules in Adblock syntax (`||host^`, paths,
+    wildcards, `|` anchors, `third-party`, resource types, `domain=`, `important`, `@@` exceptions, `$document`) from uBlock Origin's
+    lists and EasyList into an immutable index (by host, or by the longest whole word) that Chromium's network thread
+    queries without locks; the main document is never blocked. Regular expressions and rules that rewrite requests
+    (`redirect`, `removeparam`, `csp`...) are skipped and counted.
+  - *Hiding and scriptlets*: `Cosmetic` turns `##selector` rules (and `host##selector`, `#@#`) into CSS injected when the page starts loading and
+    again when it ends; generic rules are capped at 8000 (class and id selectors first); `:has()` is passed on, the procedural
+    `:has-text`, `:xpath` and similar are skipped. Of the `##+js()` scriptlets, small own versions of `json-prune` (also the fetch and XHR
+    variants), `set-constant`, `abort-on-property-read` and `-write` run; the rest are skipped. JCEF has no document-start hook
+    (no render process handler), so the code runs right after the navigation commits; it usually beats the page's inline scripts
+    but nothing guarantees it.
+  - *Cookie notices* (I still don't care about cookies): the same engine with uBlock's `annoyances-cookies.txt`, plus a script that
+    undoes `overflow:hidden` on the page only when one of those rules really matched an element.
+  - *YouTube ads*: the scriptlets above, and a small own script that, while the player shows an ad, mutes it, jumps to its end and
+    presses a skip button. Best effort: YouTube changes often.
+  - *Dark mode* (Dark Reader): the `darkreader` npm package, version 4.9.134 (MIT), fetched from the npm registry, checked against
+    the registry's SHA-512 integrity value and unpacked with a small tar reader that rejects unsafe paths, is injected into the page.
+  Lists (uBlock Origin's `filters`, `privacy`, `badware`, `quick-fixes`, `unbreak` and `annoyances-cookies` from
+  uAssets, GPL-3.0 / CC BY-SA 4.0; EasyList and EasyPrivacy from easylist.to, GPL-3.0 / CC BY-SA 3.0) are downloaded when the browser
+  starts, into `<dataDir>/browser/filters`; they are not bundled. Each file is refreshed when older than a week, capped at 8 MB and
+  checked to look like a list before it replaces the old one. The status and an "Update lists now" button are in Settings → Browser.
+  Parsed lists take under 50 MB of heap while the browser is in use.
 - **Recording.** The overlay encodes with `ffmpeg`, which it downloads on request (Settings, Recording:
   a pinned build checked against its SHA-256, into `<dataDir>/ffmpeg`; on Linux an ffmpeg on PATH is
   used first) or takes from PATH or a path the player gives. Each encoder (NVENC, AMF, QSV, VAAPI,
@@ -164,6 +201,7 @@ dispatcher can replace the arguments or skip the call. After the call, it can re
 | `Mouse.setGrabbed` | LWJGL 2: holds back the game's grab changes until the overlay closes |
 | `glfwSetInputMode(GLFW_CURSOR)`, `SDL_SetWindowRelativeMouseMode`, `SDL_WarpMouseInWindow`, `SDL_Start/StopTextInput` | Holds back the game's cursor and text input changes until the overlay closes |
 | `DebugEntrySystemSpecs#display`, `DebugEntryMemory#display` | Minecraft 26.x, fake hardware: the F3 line receiver is replaced by a proxy that rewrites the CPU, display vendor, GPU and memory lines (the proxy is where a custom F3 would add lines) |
+| `ProcessBuilder#start`, `Desktop#browse`, `SDL_OpenURL` | The game opening a web address: with the setting on "overlay browser" the launch is replaced by a harmless process (or skipped) and the address opens in a browser tab. The JDK classes are retransformed; they never start the overlay |
 | `GLX._getCpuInfo`, `GL11#glGetString`, `GL11C#glGetString` (vendor, renderer) | Minecraft 1.8 to 1.21.11, fake hardware: the return value is replaced, only on the render thread while F3 is shown (tracked from key events; the overlay's own query is exempt). These hooks never start the overlay |
 
 A key or button release still reaches the game if the game saw the press, so held keys do not stick.
@@ -354,6 +392,8 @@ disables itself, and the game keeps running.
 - Two games started from the same game folder both read its `latest.log`, so they store every message
   twice.
 - Any message containing the player's name counts as a mention, including death messages.
+- The browser has no extensions. Its filtering is a re-implementation: no per-element picker, no procedural cosmetic filters, no
+  request rewriting, and scriptlets run just after the page starts, not before its first script.
 
 ## License
 
