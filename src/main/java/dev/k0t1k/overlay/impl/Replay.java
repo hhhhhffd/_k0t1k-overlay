@@ -34,6 +34,9 @@ import java.util.function.Consumer;
 final class Replay {
     static final int SEGMENT_SECONDS = 2;
     private static final String LOCK = "owner.lock";
+    /** Directory-level lock file in the buffer root; {@link #GUARD} covers the threads of this JVM. */
+    private static final String GUARD_FILE = ".lock";
+    private static final Object GUARD = new Object();
     static final DateTimeFormatter NAME = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH.mm.ss");
 
     private final Options options;
@@ -79,10 +82,18 @@ final class Replay {
     /** Starts a buffer: clears what dead games left behind and returns this buffer's own folder for the segments. */
     synchronized Path begin(boolean hevcEncoder) throws IOException {
         Files.createDirectories(root);
-        Path own = Files.createDirectory(root.resolve(processId() + "-" + System.currentTimeMillis()));
-        lock = lock(own);
-        folder = own;
-        removeStale(root, own);
+        Path own;
+        // Creating+locking a folder and cleaning up must not interleave across games, or a cleanup
+        // could see a folder that is created but not yet locked as abandoned.
+        synchronized (GUARD) {
+            try (FileChannel guard = FileChannel.open(root.resolve(GUARD_FILE), StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+                guard.lock();
+                own = Files.createDirectory(root.resolve(processId() + "-" + System.currentTimeMillis()));
+                lock = lock(own);
+                folder = own;
+                removeStale(root, own);
+            }
+        }
         hevc = hevcEncoder;
         pruning = io.scheduleWithFixedDelay(this::prune, 1, 1, TimeUnit.SECONDS);
         return folder;
@@ -141,12 +152,13 @@ final class Replay {
     /**
      * Deletes the buffer folders in {@code root} whose game is gone (their lock is free), except
      * {@code keep}, and loose files from before buffers had folders. A folder with no lock file yet is
-     * a game that is just starting; it is left alone unless it has been there for a minute.
+     * a game that is just starting; it is left alone unless it has been there for a minute. The caller
+     * holds the root's {@code .lock} (see {@link #begin}), so no other game is mid-creation.
      */
     static void removeStale(Path root, Path keep) {
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(root)) {
             for (Path entry : stream) {
-                if (entry.equals(keep)) {
+                if (entry.equals(keep) || entry.getFileName().toString().equals(GUARD_FILE)) {
                     continue;
                 }
                 try {

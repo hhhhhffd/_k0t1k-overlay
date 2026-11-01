@@ -22,6 +22,7 @@ class ReplayFoldersTest {
         Files.createFile(own.resolve("seg00000.mkv"));
         Files.createFile(alive.resolve("seg00000.mkv"));
         Files.createFile(dead.resolve("seg00000.mkv"));
+        Path guardFile = Files.createFile(root.resolve(".lock"));
         Path loose = Files.createFile(root.resolve("seg00007.mkv"));
 
         try (FileChannel aliveLock = Replay.lock(alive)) {
@@ -36,6 +37,7 @@ class ReplayFoldersTest {
             assertFalse(Files.exists(dead));
             assertTrue(Files.exists(starting)); // no lock file yet and brand new: a game still starting
             assertFalse(Files.exists(loose));
+            assertTrue(Files.exists(guardFile)); // the directory lock file is never cleaned up
         }
     }
 }
