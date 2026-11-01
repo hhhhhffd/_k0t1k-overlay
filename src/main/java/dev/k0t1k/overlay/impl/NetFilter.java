@@ -429,7 +429,8 @@ final class NetFilter {
      * @param pageHost the host of the page it belongs to, "" when unknown
      */
     boolean blocks(String requestUrl, int type, String pageHost) {
-        String url = requestUrl.toLowerCase(Locale.ROOT);
+        String url = requestUrl.length() > MAX_URL ? requestUrl.substring(0, MAX_URL) : requestUrl;
+        url = url.toLowerCase(Locale.ROOT);
         String host = host(url);
         if (host.isEmpty()) {
             return false;
@@ -445,6 +446,9 @@ final class NetFilter {
         return find(allow, url, host, type, third, pageHost) == null;
     }
 
+    /** Matching runs on CEF's shared IO thread, so only this much of a URL is ever examined. */
+    private static final int MAX_URL = 4096;
+
     private Rule find(Index index, String url, String host, int type, boolean third, String pageHost) {
         int authority = url.indexOf("://") + 3;
         int hostStart = url.indexOf(host, authority);
@@ -452,7 +456,7 @@ final class NetFilter {
             Rule[] rules = index.byHost.get(host.substring(s));
             if (rules != null) {
                 for (Rule r : rules) {
-                    if (applies(r, type, third, pageHost) && matchAt(r.pattern, 0, url, hostStart + s, (r.flags & END) != 0)) {
+                    if (applies(r, type, third, pageHost) && matchAt(r.pattern, 0, url, hostStart + s, (r.flags & END) != 0, false)) {
                         return r;
                     }
                 }
@@ -463,6 +467,7 @@ final class NetFilter {
             }
             s = dot + 1;
         }
+        Set<Rule> tried = new HashSet<>();
         int i = 0;
         while (i < url.length()) {
             if (!wordChar(url.charAt(i))) {
@@ -476,7 +481,7 @@ final class NetFilter {
             Rule[] rules = index.byWord.get(url.substring(s, i));
             if (rules != null) {
                 for (Rule r : rules) {
-                    if (applies(r, type, third, pageHost) && search(r, url, authority)) {
+                    if (tried.add(r) && applies(r, type, third, pageHost) && search(r, url, authority)) {
                         return r;
                     }
                 }
@@ -506,17 +511,20 @@ final class NetFilter {
     private static boolean search(Rule r, String url, int authority) {
         boolean end = (r.flags & END) != 0;
         if ((r.flags & START) != 0) {
-            return matchAt(r.pattern, 0, url, 0, end);
+            return matchAt(r.pattern, 0, url, 0, end, false);
         }
         int from = (r.flags & HOST) != 0 ? authority : 0;
+        if ((r.flags & HOST) == 0) {
+            return matchAt(r.pattern, 0, url, from, end, true);
+        }
         for (int p = from; p <= url.length(); p++) {
-            if ((r.flags & HOST) != 0 && p > authority && url.charAt(p - 1) != '.' ) {
+            if (p > authority && url.charAt(p - 1) != '.') {
                 if (url.charAt(p - 1) == '/') {
                     return false;
                 }
                 continue;
             }
-            if (matchAt(r.pattern, 0, url, p, end)) {
+            if (matchAt(r.pattern, 0, url, p, end, false)) {
                 return true;
             }
         }
@@ -527,37 +535,51 @@ final class NetFilter {
         return !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.' || c == '%');
     }
 
-    private static boolean matchAt(String p, int pi, String u, int ui, boolean end) {
-        while (pi < p.length()) {
-            char c = p.charAt(pi);
-            if (c == '*') {
-                while (pi < p.length() && p.charAt(pi) == '*') {
-                    pi++;
-                }
-                if (pi == p.length()) {
-                    return true;
-                }
-                for (int k = ui; k <= u.length(); k++) {
-                    if (matchAt(p, pi, u, k, end)) {
+    /**
+     * Wildcard match with the greedy two-pointer algorithm: a failure rewinds only to the last
+     * {@code *}, so the cost is O(pattern * url) rather than exponential. {@code floating} lets the
+     * match begin anywhere at or after {@code ui}, as if the pattern started with {@code *}.
+     */
+    private static boolean matchAt(String p, int pi, String u, int ui, boolean end, boolean floating) {
+        int starP = floating ? pi : -1;
+        int starU = ui;
+        while (true) {
+            boolean step = false;
+            if (pi < p.length()) {
+                char c = p.charAt(pi);
+                if (c == '*') {
+                    while (pi < p.length() && p.charAt(pi) == '*') {
+                        pi++;
+                    }
+                    if (pi == p.length()) {
                         return true;
                     }
-                }
-                return false;
-            }
-            if (c == '^') {
-                if (ui == u.length()) {
-                    pi++;
+                    starP = pi;
+                    starU = ui;
                     continue;
                 }
-                if (!separator(u.charAt(ui))) {
-                    return false;
+                if (c == '^') {
+                    if (ui == u.length()) {
+                        pi++;
+                        continue;
+                    }
+                    step = separator(u.charAt(ui));
+                } else {
+                    step = ui < u.length() && u.charAt(ui) == c;
                 }
-            } else if (ui >= u.length() || u.charAt(ui) != c) {
+                if (step) {
+                    pi++;
+                    ui++;
+                    continue;
+                }
+            } else if (!end || ui == u.length()) {
+                return true;
+            }
+            if (starP < 0 || ++starU > u.length()) {
                 return false;
             }
-            ui++;
-            pi++;
+            pi = starP;
+            ui = starU;
         }
-        return !end || ui == u.length();
     }
 }

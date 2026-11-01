@@ -99,4 +99,19 @@ class FilterTest {
         assertNull(Links.openedAddress(Arrays.asList("ffmpeg", "-i", "http://x")));
         assertNull(Links.openedAddress(Arrays.asList("xdg-open", "https://e.com", "extra")));
     }
+
+    @Test
+    void pathologicalUrlMatchesQuicklyAndCorrectly() {
+        NetFilter f = net(".com/*markerclusterer_compiled.js$script,third-party", "/a*a*a*a*a*b^");
+        StringBuilder url = new StringBuilder("https://x.com/");
+        for (int i = 0; i < 5000; i++) {
+            url.append("compiled/");
+        }
+        long start = System.nanoTime();
+        assertFalse(f.blocks(url.toString(), NetFilter.SCRIPT, "news.org"));
+        assertFalse(f.blocks("https://x.com/" + new String(new char[5000]).replace('\0', 'a'), NetFilter.SCRIPT, "news.org"));
+        assertTrue((System.nanoTime() - start) / 1_000_000 < 50);
+        assertTrue(f.blocks("https://x.com/compiled/markerclusterer_compiled.js", NetFilter.SCRIPT, "news.org"));
+        assertTrue(f.blocks("https://x.com/a1a2a3a4a5b/", NetFilter.IMAGE, "news.org"));
+    }
 }
