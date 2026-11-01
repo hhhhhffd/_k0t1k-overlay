@@ -137,6 +137,14 @@ final class Ui {
     void endFrame() {
         // A frame that threw between clip and unclip must not leave hit testing clipped for good.
         clips.clear();
+        clearInput();
+    }
+
+    /**
+     * Drops this frame's clicks, keys and wheel. Unlike {@link #endFrame} it keeps the clip stack, so a
+     * widget may call it (through {@link #resetInput}) in the middle of drawing.
+     */
+    private void clearInput() {
         if (clicked && !clickHandled) {
             focus = null;
         }
@@ -157,7 +165,7 @@ final class Ui {
 
     /** Drops all input, e.g. when the overlay closes, so nothing leaks into the next opening. */
     void resetInput() {
-        endFrame();
+        clearInput();
         mouseDown = false;
         dragging = null;
         java.util.Arrays.fill(buttonDown, false);
