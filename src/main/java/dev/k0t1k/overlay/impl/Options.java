@@ -29,6 +29,14 @@ final class Options {
     static final int MIN_SCALE = 50;
     static final int MAX_SCALE = 200;
     static final int MAX_LAUNCHER_SCALE = 300;
+    static final int MIN_HUD_SIZE = 50;
+    static final int MAX_HUD_SIZE = 200;
+    static final int MIN_HUD_OPACITY = 20;
+    static final int TOAST_CENTER = 0;
+    static final int TOAST_TOP_LEFT = 1;
+    static final int TOAST_TOP_RIGHT = 2;
+    static final int TOAST_BOTTOM_LEFT = 3;
+    static final int TOAST_BOTTOM_RIGHT = 4;
 
     final Path gameDir;
     final Path dataDir;
@@ -38,8 +46,25 @@ final class Options {
 
     // Saved settings.
     boolean hud;
-    /** 0 top left, 1 top right, 2 bottom left, 3 bottom right. */
-    int hudCorner;
+    /**
+     * Where the HUD sits, as a share (0 to 1) of the screen space it can move in, so the place
+     * survives a change of resolution: 0, 0 is the top left corner, 1, 1 the bottom right.
+     */
+    float hudX;
+    float hudY;
+    /** The HUD's size in percent on top of the interface scale, {@link #MIN_HUD_SIZE} to {@link #MAX_HUD_SIZE}. */
+    int hudSize = 100;
+    /** How opaque the HUD's background is, in percent. */
+    int hudOpacity = 100;
+    boolean hudFps = true;
+    boolean hudFrame = true;
+    boolean hudLow;
+    boolean hudHeap = true;
+    boolean hudCpu;
+    boolean hudGc;
+    boolean hudGraph = true;
+    /** Where toasts appear: one of the {@code TOAST_*} constants. */
+    int toastPos = TOAST_BOTTOM_RIGHT;
     /** Whether the cat pops up to react to deaths, advancements, AFK and timers. */
     boolean cat = true;
     /** Whether the last seconds of the game are kept for Shift+F2 (OpenGL 3.2 and Vulkan). */
@@ -124,10 +149,41 @@ final class Options {
         replay = Boolean.parseBoolean(saved.getProperty("replay", "true"));
         replayFormat = "gif".equals(saved.getProperty("replayFormat")) ? "gif" : "video";
         uiScale = parseScale(saved.getProperty("uiScale", "0"), MAX_SCALE);
+        hudSize = intSetting(saved, "hudSize", 100, MIN_HUD_SIZE, MAX_HUD_SIZE);
+        hudOpacity = intSetting(saved, "hudOpacity", 100, MIN_HUD_OPACITY, 100);
+        toastPos = intSetting(saved, "toastPos", TOAST_BOTTOM_RIGHT, TOAST_CENTER, TOAST_BOTTOM_RIGHT);
+        hudFps = Boolean.parseBoolean(saved.getProperty("hudFps", "true"));
+        hudFrame = Boolean.parseBoolean(saved.getProperty("hudFrame", "true"));
+        hudLow = Boolean.parseBoolean(saved.getProperty("hudLow", "false"));
+        hudHeap = Boolean.parseBoolean(saved.getProperty("hudHeap", "true"));
+        hudCpu = Boolean.parseBoolean(saved.getProperty("hudCpu", "false"));
+        hudGc = Boolean.parseBoolean(saved.getProperty("hudGc", "false"));
+        hudGraph = Boolean.parseBoolean(saved.getProperty("hudGraph", "true"));
+        if (saved.containsKey("hudX")) {
+            hudX = floatSetting(saved, "hudX");
+            hudY = floatSetting(saved, "hudY");
+        } else {
+            // Older files stored a corner: 0 top left, 1 top right, 2 bottom left, 3 bottom right.
+            int corner = intSetting(saved, "hudCorner", 0, 0, 3);
+            hudX = corner % 2;
+            hudY = corner / 2;
+        }
+    }
+
+    private static int intSetting(Properties saved, String key, int fallback, int min, int max) {
         try {
-            hudCorner = Math.max(0, Math.min(3, Integer.parseInt(saved.getProperty("hudCorner", "0"))));
+            return Math.max(min, Math.min(max, Integer.parseInt(saved.getProperty(key, Integer.toString(fallback)))));
         } catch (NumberFormatException e) {
-            hudCorner = 0;
+            return fallback;
+        }
+    }
+
+    private static float floatSetting(Properties saved, String key) {
+        try {
+            float value = Float.parseFloat(saved.getProperty(key, "0"));
+            return Float.isNaN(value) ? 0 : Math.max(0, Math.min(1, value));
+        } catch (NumberFormatException e) {
+            return 0;
         }
     }
 
@@ -135,7 +191,18 @@ final class Options {
     Runnable saveTask() {
         Properties snapshot = new Properties();
         snapshot.setProperty("hud", Boolean.toString(hud));
-        snapshot.setProperty("hudCorner", Integer.toString(hudCorner));
+        snapshot.setProperty("hudX", Float.toString(hudX));
+        snapshot.setProperty("hudY", Float.toString(hudY));
+        snapshot.setProperty("hudSize", Integer.toString(hudSize));
+        snapshot.setProperty("hudOpacity", Integer.toString(hudOpacity));
+        snapshot.setProperty("hudFps", Boolean.toString(hudFps));
+        snapshot.setProperty("hudFrame", Boolean.toString(hudFrame));
+        snapshot.setProperty("hudLow", Boolean.toString(hudLow));
+        snapshot.setProperty("hudHeap", Boolean.toString(hudHeap));
+        snapshot.setProperty("hudCpu", Boolean.toString(hudCpu));
+        snapshot.setProperty("hudGc", Boolean.toString(hudGc));
+        snapshot.setProperty("hudGraph", Boolean.toString(hudGraph));
+        snapshot.setProperty("toastPos", Integer.toString(toastPos));
         snapshot.setProperty("cat", Boolean.toString(cat));
         snapshot.setProperty("replay", Boolean.toString(replay));
         snapshot.setProperty("replayFormat", replayFormat);

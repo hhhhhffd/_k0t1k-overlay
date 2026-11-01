@@ -46,7 +46,7 @@ Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it
 | **Tools** | Overworld ↔ Nether coordinates (with "my position"), stacks and shulker boxes, timers and alarms that survive a restart, the latest screenshots. Each F2 screenshot shows a toast with the instance and position. |
 | **Mods** | The instance's mods with a search and what each one does (from the mod's metadata), with links to Modrinth and the mod's homepage. |
 | **Profile** | Lifetime stats (play time, sessions, deaths, advancements, screenshots, crashes) and the launcher's achievements on top of them. |
-| **Performance** | FPS, frame time, 1% low, a frame time graph, heap, GC and the game's CPU load, plus an optional HUD in a corner of the screen (turned on in Settings). |
+| **Performance** | FPS, frame time, 1% low, a frame time graph, heap, GC and the game's CPU load, plus an optional HUD you can place anywhere, resize and pick metrics for (Settings). Notifications can appear under the crosshair or in any corner. |
 | **Browser** | A real Chromium (JCEF, off-screen rendering) in its own tab: back, forward, reload, an address bar that also searches, quick links (Minecraft Wiki, Modrinth, CurseForge, YouTube). |
 | **Replay** | The last 30 seconds kept in memory; **Shift+F2** or the button in Tools saves them as a GIF or a video. |
 | **Music** | What the system plays (Spotify, a browser tab, any player) with previous, play/pause and next, and a toast when a new track starts. |

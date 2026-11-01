@@ -126,6 +126,8 @@ public final class Overlay implements Function<Object[], Object> {
     }
 
     private final List<Toast> toasts = new ArrayList<>();
+    /** Whether the HUD is being placed: the overlay shows only the HUD and a hint. */
+    private boolean hudEditing;
 
     public Overlay(String args) {
         options = new Options(args);
@@ -416,6 +418,19 @@ public final class Overlay implements Function<Object[], Object> {
         io.execute(options.saveTask());
     }
 
+    /** Switches to placing the HUD; Esc, Enter or the Done button leads back to the settings. */
+    void startHudEdit() {
+        hudEditing = true;
+        ui.resetInput();
+    }
+
+    private void endHudEdit() {
+        hudEditing = false;
+        perfView.endEdit();
+        ui.resetInput();
+        saveSettings();
+    }
+
     Media media() {
         return media;
     }
@@ -635,7 +650,9 @@ public final class Overlay implements Function<Object[], Object> {
             // and the key does not stay down.
             return false;
         }
-        if (key == Keys.ESCAPE) {
+        if (hudEditing && (key == Keys.ESCAPE || key == Keys.ENTER || key == Keys.KP_ENTER)) {
+            endHudEdit();
+        } else if (key == Keys.ESCAPE) {
             setOpen(false);
         } else {
             ui.onKey(key, mods);
@@ -697,6 +714,9 @@ public final class Overlay implements Function<Object[], Object> {
             ui.onMove(sizes[2] / 2f * pixelRatio / ui.scale, sizes[3] / 2f * pixelRatio / ui.scale);
             toasts.clear();
         } else {
+            if (hudEditing) {
+                endHudEdit();
+            }
             open = false;
             notes.flush(true);
             platform.restoreCursor();
@@ -838,18 +858,25 @@ public final class Overlay implements Function<Object[], Object> {
     }
 
     private void draw(float w, float h) {
-        if (open) {
+        if (open && hudEditing) {
+            if (perfView.edit(ui, w, h)) {
+                endHudEdit();
+            }
+        } else if (open) {
             drawOverlay(w, h);
         } else if (options.hud) {
             perfView.drawHud(ui, w, h);
         }
-        if (open) {
-            // Sits in the strip under the content card, next to the close hint.
-            cat.draw(ui, 16, h - 3, 0.75f, true, System.currentTimeMillis());
-        } else if (options.cat) {
-            cat.draw(ui, 16, h - 10, 1.5f, false, System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+        // Where the cat is drawn: in the strip under the content card while open, else in the corner.
+        float catBottom = open ? h - 3 : h - 10;
+        float catPixel = open ? 0.75f : 1.5f;
+        boolean catShown = open || options.cat;
+        if (catShown) {
+            cat.draw(ui, 16, catBottom, catPixel, open, now);
         }
-        drawToasts(w, h);
+        float[] catBox = catShown ? cat.bounds(ui, 16, catBottom, catPixel, open, now) : null;
+        drawToasts(w, h, catBox);
     }
 
     private void drawOverlay(float w, float h) {
@@ -1039,25 +1066,52 @@ public final class Overlay implements Function<Object[], Object> {
                 media.playing ? Ui.MUTED : Ui.FAINT, label);
     }
 
-    private void drawToasts(float w, float h) {
-        float y = h - 16;
+    /**
+     * Stacks the toasts at the chosen place, newest nearest to the anchor. A toast that would cover
+     * the HUD or the cat (with its bubble) moves on along the stack until it clears them.
+     */
+    private void drawToasts(float w, float h, float[] catBox) {
+        int pos = options.toastPos;
+        boolean up = pos == Options.TOAST_BOTTOM_LEFT || pos == Options.TOAST_BOTTOM_RIGHT;
+        boolean left = pos == Options.TOAST_TOP_LEFT || pos == Options.TOAST_BOTTOM_LEFT;
+        float tw = pos == Options.TOAST_CENTER ? 240 : 300;
+        float x = pos == Options.TOAST_CENTER ? (w - tw) / 2 : left ? 16 : w - tw - 16;
+        float y = up ? h - 16 : pos == Options.TOAST_CENTER ? h / 2 + 48 : 16;
+        List<float[]> avoid = new ArrayList<>();
+        if (!open && options.hud) {
+            float[] hudBox = new float[4];
+            perfView.hudRect(w, h, hudBox);
+            avoid.add(hudBox);
+        }
+        if (catBox != null) {
+            avoid.add(catBox);
+        }
+        float gap = 10;
         for (int i = toasts.size() - 1; i >= 0; i--) {
             Toast toast = toasts.get(i);
-            float tw = 300;
             List<int[]> lines = ui.wrap(ui.regular, 13, toast.body, tw - 28);
             int shown = Math.min(lines.size(), 3);
             float th = 38 + shown * ui.lineHeight(ui.regular, 13);
-            y -= th;
-            float x = w - tw - 16;
-            ui.panel(x, y, tw, th, 10, 0xf21b1728, 0xff3a3256);
-            ui.round(x + 1, y + 10, 3, th - 20, 1.5f, Ui.ACCENT);
-            ui.text(ui.bold, 13, x + 14, y + 10, Ui.FG, toast.title);
+            float ty = up ? y - th : y;
+            for (boolean moved = true; moved; ) {
+                moved = false;
+                for (float[] box : avoid) {
+                    if (x < box[0] + box[2] + gap && x + tw > box[0] - gap
+                            && ty < box[1] + box[3] + gap && ty + th > box[1] - gap) {
+                        ty = up ? box[1] - gap - th : box[1] + box[3] + gap;
+                        moved = true;
+                    }
+                }
+            }
+            ui.panel(x, ty, tw, th, 10, 0xf21b1728, 0xff3a3256);
+            ui.round(x + 1, ty + 10, 3, th - 20, 1.5f, Ui.ACCENT);
+            ui.text(ui.bold, 13, x + 14, ty + 10, Ui.FG, toast.title);
             for (int l = 0; l < shown; l++) {
                 int[] span = lines.get(l);
-                ui.text(ui.regular, 13, x + 14, y + 30 + l * ui.lineHeight(ui.regular, 13), Ui.MUTED,
+                ui.text(ui.regular, 13, x + 14, ty + 30 + l * ui.lineHeight(ui.regular, 13), Ui.MUTED,
                         toast.body, span[0], span[1]);
             }
-            y -= 10;
+            y = up ? ty - gap : ty + th + gap;
         }
     }
 }

@@ -18,7 +18,23 @@ final class Strings {
         add("settings.scaleHint", "Ctrl + mouse wheel or Ctrl + plus / minus changes it, Ctrl+0 returns to Auto",
                 "Ctrl + колесо мыши или Ctrl + плюс / минус меняют его, Ctrl+0 — вернуть Авто");
         add("settings.hud", "HUD", "HUD");
+        add("settings.notify", "Notifications", "Уведомления");
         add("settings.cat", "Cat", "Кот");
+        add("hud.size", "Size", "Размер");
+        add("hud.opacity", "Background opacity", "Прозрачность фона");
+        add("hud.metrics", "Show", "Показывать");
+        add("hud.edit", "Edit HUD position", "Положение HUD");
+        add("hud.presets", "Corner", "Угол");
+        add("perf.editHint", "Drag the HUD, Esc/Enter to finish", "Перетащи HUD, Esc/Enter — закончить");
+        add("perf.editDone", "Done", "Готово");
+        add("toast.position", "Where notifications appear", "Где появляются уведомления");
+        add("toast.center", "Under the crosshair", "Под прицелом");
+        add("toast.topLeft", "Top left", "Слева сверху");
+        add("toast.topRight", "Top right", "Справа сверху");
+        add("toast.bottomLeft", "Bottom left", "Слева снизу");
+        add("toast.bottomRight", "Bottom right", "Справа снизу");
+        add("toast.test", "Test notification", "Проверить уведомление");
+        add("toast.testBody", "This is how notifications look here", "Так выглядят уведомления здесь");
         add("settings.replay", "Replay", "Повтор");
         add("tab.notes", "Notes", "Заметки");
         add("tab.perf", "Performance", "Производительность");
@@ -57,8 +73,8 @@ final class Strings {
         add("perf.gc", "GC", "GC");
         add("perf.cpu", "CPU (game)", "CPU (игра)");
         add("perf.graph", "Frame times, last %d frames", "Время кадров, последние %d");
+        add("perf.graphShort", "Graph", "График");
         add("perf.hud", "Show HUD while playing", "Показывать HUD в игре");
-        add("perf.corner", "Corner", "Угол");
         add("perf.gcBody", "%d runs, %d ms", "%d сборок, %d мс");
         add("perf.threads", "%d threads", "%d потоков");
         add("perf.system", "System", "Система");

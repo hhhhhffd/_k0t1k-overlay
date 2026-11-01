@@ -128,6 +128,26 @@ final class Cat {
         }
     }
 
+    /**
+     * The box {x, y, width, height} the cat and its speech bubble cover when drawn like
+     * {@link #draw}, or null while it is not on screen.
+     */
+    float[] bounds(Ui ui, float x, float bottom, float pixel, boolean always, long now) {
+        if (!talking(now) && !always) {
+            return null;
+        }
+        float top = bottom - height * pixel;
+        float right = x + width * pixel;
+        if (talking(now)) {
+            float bubbleX = x + width * pixel * 0.55f;
+            float bubbleW = Math.min(ui.measure(ui.regular, 13, bubble), 260) + 24;
+            float bubbleH = ui.wrap(ui.regular, 13, bubble, bubbleW - 24).size() * ui.lineHeight(ui.regular, 13) + 16;
+            right = Math.max(right, bubbleX + bubbleW);
+            top -= 6 + bubbleH;
+        }
+        return new float[] {x, top, right - x, bottom - top};
+    }
+
     private void drawBubble(Ui ui, float x, float bottom, float textW) {
         float w = Math.min(textW, 260) + 24;
         List<int[]> lines = ui.wrap(ui.regular, 13, bubble, w - 24);

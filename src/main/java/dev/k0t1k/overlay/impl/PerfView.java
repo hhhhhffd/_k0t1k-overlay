@@ -93,19 +93,163 @@ final class PerfView {
         }
     }
 
+    private static final float HUD_MARGIN = 8;
+    private static final float HUD_WIDTH = 172;
+    private static final float HUD_PAD = 8;
+    private static final float HUD_ROW = 17;
+    private static final float HUD_GRAPH = 30;
+    private static final float SNAP = 12;
+
+    /** Whether the HUD is being dragged in the edit mode, and where the pointer grabbed it. */
+    private boolean dragging;
+    private float grabX;
+    private float grabY;
+
+    /**
+     * The HUD's box on a screen {@code screenW} by {@code screenH} units, written to {@code out} as
+     * {x, y, width, height}. Drawing and the toasts that keep clear of it both use this.
+     */
+    void hudRect(float screenW, float screenH, float[] out) {
+        float scale = options.hudSize / 100f;
+        int rows = (options.hudFps ? 1 : 0) + (options.hudFrame ? 1 : 0) + (options.hudLow ? 1 : 0)
+                + (options.hudHeap ? 1 : 0) + (options.hudCpu ? 1 : 0) + (options.hudGc ? 1 : 0);
+        float h = HUD_PAD * 2 + rows * HUD_ROW + (options.hudGraph ? HUD_GRAPH + (rows > 0 ? 4 : 0) : 0);
+        float w = HUD_WIDTH * scale;
+        h *= scale;
+        out[0] = HUD_MARGIN + options.hudX * Math.max(0, screenW - w - HUD_MARGIN * 2);
+        out[1] = HUD_MARGIN + options.hudY * Math.max(0, screenH - h - HUD_MARGIN * 2);
+        out[2] = w;
+        out[3] = h;
+    }
+
     void drawHud(Ui ui, float screenW, float screenH) {
-        float w = 196;
-        float h = 64;
-        float m = 8;
-        float x = options.hudCorner % 2 == 0 ? m : screenW - w - m;
-        float y = options.hudCorner < 2 ? m : screenH - h - m;
-        ui.round(x, y, w, h, 8, 0xc00b0910);
-        float tw = ui.text(ui.bold, 15, x + 10, y + 7, Ui.FG, Integer.toString(perf.fps));
-        ui.text(ui.regular, 11, x + 10 + tw + 4, y + 10, Ui.MUTED, "FPS");
-        String frame = String.format("%.1f ms", perf.average);
-        ui.text(ui.regular, 12, x + 82, y + 9, frameColor(perf.average), frame);
-        String heap = mb(perf.heapUsed);
-        ui.text(ui.regular, 12, x + w - 10 - ui.measure(ui.regular, 12, heap), y + 9, Ui.MUTED, heap);
-        graph(ui, x + 10, y + 30, w - 20, h - 38, 120, false);
+        float[] r = new float[4];
+        hudRect(screenW, screenH, r);
+        drawHudAt(ui, r);
+    }
+
+    /** Lays the HUD out at 100% and draws it with the scale raised by the HUD's size. */
+    private void drawHudAt(Ui ui, float[] r) {
+        float k = options.hudSize / 100f;
+        float outer = ui.scale;
+        ui.scale = outer * k;
+        try {
+            drawHudBox(ui, r[0] / k, r[1] / k, r[2] / k, r[3] / k);
+        } finally {
+            ui.scale = outer;
+        }
+    }
+
+    private void drawHudBox(Ui ui, float x, float y, float w, float h) {
+        int alpha = Math.round(0xc0 * options.hudOpacity / 100f);
+        ui.round(x, y, w, h, 8, alpha << 24 | 0x0b0910);
+        float ty = y + HUD_PAD;
+        float left = x + HUD_PAD + 2;
+        float right = x + w - HUD_PAD - 2;
+        if (options.hudFps) {
+            row(ui, left, right, ty, "FPS", Integer.toString(perf.fps), Ui.FG, true);
+            ty += HUD_ROW;
+        }
+        if (options.hudFrame) {
+            row(ui, left, right, ty, strings.get("perf.frame"), String.format("%.1f ms", perf.average),
+                    frameColor(perf.average), false);
+            ty += HUD_ROW;
+        }
+        if (options.hudLow) {
+            row(ui, left, right, ty, strings.get("perf.low"), String.format("%.1f ms", perf.worst),
+                    frameColor(perf.worst), false);
+            ty += HUD_ROW;
+        }
+        if (options.hudHeap) {
+            float share = perf.heapMax > 0 ? perf.heapUsed / (float) perf.heapMax : 0;
+            row(ui, left, right, ty, strings.get("perf.heap"), mb(perf.heapUsed) + " / " + mb(perf.heapMax),
+                    share > 0.9f ? Ui.DANGER : Ui.FG, false);
+            ty += HUD_ROW;
+        }
+        if (options.hudCpu) {
+            row(ui, left, right, ty, "CPU", perf.cpu < 0 ? "—" : Math.round(perf.cpu * 100) + "%", Ui.FG, false);
+            ty += HUD_ROW;
+        }
+        if (options.hudGc) {
+            row(ui, left, right, ty, "GC", perf.gcRecentMillis + " ms", perf.gcRecentMillis > 50 ? Ui.WARN : Ui.FG,
+                    false);
+            ty += HUD_ROW;
+        }
+        if (options.hudGraph) {
+            float gy = ty + (ty > y + HUD_PAD ? 4 : 0);
+            graph(ui, x + HUD_PAD, gy, w - HUD_PAD * 2, y + h - HUD_PAD - gy, 120, false);
+        }
+    }
+
+    /** A label on the left and its value on the right; the FPS value is drawn larger. */
+    private static void row(Ui ui, float left, float right, float y, String label, String value, int color, boolean big) {
+        Font font = big ? ui.bold : ui.regular;
+        float size = big ? 15 : 12;
+        ui.text(ui.regular, 12, left, y + 1, Ui.MUTED, label);
+        ui.text(font, size, right - ui.measure(font, size, value), y + (big ? -1 : 1), color, value);
+    }
+
+    /**
+     * The mode for placing the HUD: a veil over the game, the HUD as it looks in play, and a hint.
+     * Dragging with the left button moves it, snapping to the screen edges and centre lines. Returns
+     * true once the Done button is clicked (the overlay handles Esc and Enter itself).
+     */
+    boolean edit(Ui ui, float screenW, float screenH) {
+        ui.rect(0, 0, screenW, screenH, 0x80060509);
+        float[] r = new float[4];
+        hudRect(screenW, screenH, r);
+        if (ui.clicked && ui.hover(r[0], r[1], r[2], r[3])) {
+            dragging = true;
+            grabX = ui.mouseX - r[0];
+            grabY = ui.mouseY - r[1];
+        }
+        if (dragging && !ui.mouseDown) {
+            dragging = false;
+        }
+        if (dragging) {
+            float freeX = screenW - r[2] - HUD_MARGIN * 2;
+            float freeY = screenH - r[3] - HUD_MARGIN * 2;
+            options.hudX = share(snap(ui.mouseX - grabX, HUD_MARGIN, freeX + HUD_MARGIN, (screenW - r[2]) / 2), freeX);
+            options.hudY = share(snap(ui.mouseY - grabY, HUD_MARGIN, freeY + HUD_MARGIN, (screenH - r[3]) / 2), freeY);
+            hudRect(screenW, screenH, r);
+        }
+        drawHudAt(ui, r);
+        // Four bars outside the HUD: a filled outline would show through its translucent background.
+        int outline = dragging || ui.hover(r[0], r[1], r[2], r[3]) ? Ui.ACCENT : Ui.FAINT;
+        ui.rect(r[0] - 3, r[1] - 3, r[2] + 6, 2, outline);
+        ui.rect(r[0] - 3, r[1] + r[3] + 1, r[2] + 6, 2, outline);
+        ui.rect(r[0] - 3, r[1] - 1, 2, r[3] + 2, outline);
+        ui.rect(r[0] + r[2] + 1, r[1] - 1, 2, r[3] + 2, outline);
+
+        String hint = strings.get("perf.editHint");
+        String done = strings.get("perf.editDone");
+        float hw = ui.measure(ui.bold, 15, hint);
+        float bw = ui.buttonWidth(done) + 24;
+        float boxW = hw + 48;
+        float boxX = (screenW - boxW) / 2;
+        float boxY = screenH / 2 - 56;
+        ui.panel(boxX, boxY, boxW, 104, 12, 0xf513101c, Ui.LINE);
+        ui.text(ui.bold, 15, (screenW - hw) / 2, boxY + 18, Ui.FG, hint);
+        return ui.button((screenW - bw) / 2, boxY + 54, bw, 32, done, true);
+    }
+
+    /** Drops a drag in progress when the mode ends. */
+    void endEdit() {
+        dragging = false;
+    }
+
+    private static float snap(float v, float min, float max, float middle) {
+        if (Math.abs(v - min) < SNAP) {
+            return min;
+        }
+        if (Math.abs(v - max) < SNAP) {
+            return max;
+        }
+        return Math.abs(v - middle) < SNAP ? middle : v;
+    }
+
+    /** The offset {@code v} from the screen's edge as a share of the {@code free} space, clamped to 0 to 1. */
+    private static float share(float v, float free) {
+        return free <= 0 ? 0 : Math.max(0, Math.min(1, (v - HUD_MARGIN) / free));
     }
 }
