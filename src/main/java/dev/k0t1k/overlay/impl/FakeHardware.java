@@ -170,11 +170,15 @@ final class FakeHardware {
             return line;
         }
 
-        /** The " (dGPU)" style suffix the game appends to the GPU name, or nothing. */
+        /**
+         * The " (dGPU)" style kind the game appends to the GPU name, as a discrete card whatever the real
+         * one is: a fake RTX marked "(software)" or "(iGPU)" would give the joke away. Nothing when the
+         * game shows no kind.
+         */
         private String kind(String gpu) {
             for (String kind : new String[] {" (iGPU)", " (dGPU)", " (vGPU)", " (software)"}) {
                 if (gpu.endsWith(kind)) {
-                    return kind;
+                    return " (dGPU)";
                 }
             }
             return "";
