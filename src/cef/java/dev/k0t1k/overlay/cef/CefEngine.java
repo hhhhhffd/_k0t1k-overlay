@@ -4,6 +4,7 @@ import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Queue;
@@ -22,6 +23,7 @@ import org.cef.callback.CefMenuModel;
 import org.cef.handler.CefContextMenuHandlerAdapter;
 import org.cef.handler.CefDisplayHandlerAdapter;
 import org.cef.handler.CefLoadHandlerAdapter;
+import org.cef.network.CefCookie;
 import org.cef.network.CefCookieManager;
 
 import dev.k0t1k.overlay.impl.BrowserEngine;
@@ -316,6 +318,21 @@ public final class CefEngine implements BrowserEngine {
     @Override
     public void clearCookies() {
         CefCookieManager.getGlobalManager().deleteCookies("", "");
+    }
+
+    @Override
+    public boolean setCookie(String targetUrl, String name, String value, String domain, String path,
+            boolean secure, boolean httpOnly, long expiresMillis) {
+        Date now = new Date();
+        boolean hasExpires = expiresMillis != 0;
+        Date expires = hasExpires ? new Date(expiresMillis) : now;
+        CefCookie cookie = new CefCookie(name, value, domain, path, secure, httpOnly, now, now, hasExpires, expires);
+        return CefCookieManager.getGlobalManager().setCookie(targetUrl, cookie);
+    }
+
+    @Override
+    public void flushCookies() {
+        CefCookieManager.getGlobalManager().flushStore(null);
     }
 
     @Override

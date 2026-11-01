@@ -79,5 +79,16 @@ public interface BrowserEngine {
     /** Deletes the cookies of every site (logins included). */
     void clearCookies();
 
+    /**
+     * Sets one cookie, as if the site had set it itself. {@code url} must be
+     * {@code (secure ? "https://" : "http://") + <domain without a leading dot> + path}. {@code expiresMillis}
+     * of 0 makes a session cookie. Returns whether CEF accepted it.
+     */
+    boolean setCookie(String url, String name, String value, String domain, String path, boolean secure,
+            boolean httpOnly, long expiresMillis);
+
+    /** Flushes cookies to disk; called once after a batch of {@link #setCookie} calls. */
+    void flushCookies();
+
     void close();
 }

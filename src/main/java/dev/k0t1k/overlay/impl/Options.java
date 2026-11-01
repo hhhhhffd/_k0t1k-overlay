@@ -78,6 +78,8 @@ final class Options {
     /** The search engine for the address bar: a key of {@code BrowserView.ENGINES}. */
     String browserSearch = "google";
     boolean bookmarksBar = true;
+    /** Domains (comma separated) whose cookies "Import sign-ins" is allowed to copy in. */
+    String browserImportAllowlist = String.join(", ", BrowserLogins.DEFAULT_ALLOWLIST);
     /** The launcher's interface zoom in percent, or 0 when it is on automatic. */
     final int launcherScale;
     /** Whether the F3 screen shows the fake hardware below instead of the real one. */
@@ -184,6 +186,7 @@ final class Options {
         browserHome = saved.getProperty("browserHome", browserHome);
         browserSearch = saved.getProperty("browserSearch", browserSearch);
         bookmarksBar = Boolean.parseBoolean(saved.getProperty("bookmarksBar", "true"));
+        browserImportAllowlist = saved.getProperty("browserImportAllowlist", browserImportAllowlist);
         fakeHardware = Boolean.parseBoolean(saved.getProperty("fakeHardware", "false"));
         fakeCpu = saved.getProperty("fakeCpu", fakeCpu);
         fakeGpu = saved.getProperty("fakeGpu", fakeGpu);
@@ -240,6 +243,7 @@ final class Options {
         snapshot.setProperty("browserHome", browserHome);
         snapshot.setProperty("browserSearch", browserSearch);
         snapshot.setProperty("bookmarksBar", Boolean.toString(bookmarksBar));
+        snapshot.setProperty("browserImportAllowlist", browserImportAllowlist);
         snapshot.setProperty("fakeHardware", Boolean.toString(fakeHardware));
         snapshot.setProperty("fakeCpu", fakeCpu);
         snapshot.setProperty("fakeThreads", Integer.toString(fakeThreads));

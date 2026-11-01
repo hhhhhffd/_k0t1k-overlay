@@ -427,6 +427,58 @@ public final class Overlay implements Function<Object[], Object> {
         return browser.clearCookies();
     }
 
+    /** Finds the browsers and profiles "Import sign-ins" can use, on the io thread; answers on the render thread. */
+    void detectBrowserLogins(java.util.function.Consumer<java.util.List<BrowserLogins.Source>> onDone) {
+        io.execute(() -> {
+            java.util.List<BrowserLogins.Source> sources = BrowserLogins.detect();
+            render.execute(() -> onDone.accept(sources));
+        });
+    }
+
+    /**
+     * Imports {@code source}/{@code profile}'s allowlisted cookies into the browser tab and calls
+     * {@code onDone} on the render thread with a one-line result. Runs on the io thread.
+     */
+    void importBrowserLogins(BrowserLogins.Source source, BrowserLogins.Profile profile, java.util.function.Consumer<String> onDone) {
+        io.execute(() -> {
+            java.util.Set<String> allowlist = BrowserLogins.parseAllowlist(options.browserImportAllowlist);
+            java.util.List<BrowserLogins.Cookie> cookies = new java.util.ArrayList<>();
+            BrowserLogins.Result result = BrowserLogins.importCookies(source, profile, allowlist, cookies);
+            String message = browserLoginMessage(source, profile, cookies, result);
+            render.execute(() -> onDone.accept(message));
+        });
+    }
+
+    /** Writes the imported cookies into the browser tab (io thread) and composes the result line. */
+    private String browserLoginMessage(BrowserLogins.Source source, BrowserLogins.Profile profile,
+            java.util.List<BrowserLogins.Cookie> cookies, BrowserLogins.Result result) {
+        BrowserEngine engine = browser.engine();
+        if (engine == null) {
+            return strings.get("settings.browserImportNoTab");
+        }
+        if (cookies.isEmpty()) {
+            return "locked".equals(result.error) ? strings.format("settings.browserImportLocked", source.displayName)
+                    : result.error != null ? strings.format("settings.browserImportErrorGeneric", result.error)
+                    : strings.format("settings.browserImportDone", 0, source.displayName, profile.name);
+        }
+        int written = 0;
+        for (BrowserLogins.Cookie cookie : cookies) {
+            String host = cookie.host.startsWith(".") ? cookie.host.substring(1) : cookie.host;
+            String url = (cookie.secure ? "https://" : "http://") + host + cookie.path;
+            if (engine.setCookie(url, cookie.name, cookie.value, cookie.host, cookie.path, cookie.secure,
+                    cookie.httpOnly, cookie.expiresMillis)) {
+                written++;
+            }
+        }
+        engine.flushCookies();
+        render.execute(browserView::reloadActive);
+        String message = strings.format("settings.browserImportDone", written, source.displayName, profile.name);
+        if (result.undecryptable > 0) {
+            message += " " + strings.format("settings.browserImportSkipped", result.undecryptable);
+        }
+        return message;
+    }
+
     FakeHardware hardware() {
         return hardware;
     }
