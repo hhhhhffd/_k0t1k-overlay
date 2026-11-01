@@ -70,7 +70,10 @@ button is hidden and deaths are not counted. Advancements are read from the chat
   `CefBrowser_N` that keeps its pixels instead of painting into AWT, and `CefEngine`) ships inside the
   agent as `cef-bridge.jar` and loads next to JCEF in a class loader of its own. Windows and Linux on
   x64; the page is drawn by the OpenGL 3.2 and Vulkan renderers (not on LWJGL 2). CEF needs `--no-first-run` off screen: its EULA
-  dialog would otherwise end the browser process with exit code 28.
+  dialog would otherwise end the browser process with exit code 28. "Import sign-ins" (Settings → Browser) copies cookies for an
+  allowlisted domain list (editable there) from a detected Firefox or Chromium-family profile into the tab, via a hand-written
+  read-only SQLite reader (`SqliteReader`, with Firefox's WAL overlay) and `BrowserLogins`'s decryption of Chromium's cookie store
+  (DPAPI on Windows, a PBKDF2 fallback key on Linux); Chromium's app-bound `v20` cookies cannot be decrypted at all.
 - **Recording.** The overlay encodes with `ffmpeg`, which it downloads on request (Settings, Recording:
   a pinned build checked against its SHA-256, into `<dataDir>/ffmpeg`; on Linux an ffmpeg on PATH is
   used first) or takes from PATH or a path the player gives. Each encoder (NVENC, AMF, QSV, VAAPI,

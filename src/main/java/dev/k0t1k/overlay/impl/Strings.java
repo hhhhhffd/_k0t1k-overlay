@@ -222,6 +222,20 @@ final class Strings {
         add("settings.browserClear", "Clear cookies and logins", "Удалить куки и входы");
         add("settings.browserCleared", "Cleared", "Удалено");
         add("settings.browserStopped", "Open the browser tab first", "Сначала открой вкладку браузера");
+        add("settings.browserImport", "Import sign-ins", "Перенести входы");
+        add("settings.browserImportHint",
+                "Copies cookies from another browser's allowlisted sites, so you don't have to log in here again. Only cookies from these domains (or their subdomains) are copied.",
+                "Копирует куки сайтов из списка ниже из другого браузера, чтобы не входить здесь заново. Переносятся только куки этих доменов (и их поддоменов).");
+        add("settings.browserImportAllowlist", "Allowed domains", "Разрешённые домены");
+        add("settings.browserImportScanning", "Looking for browsers…", "Ищу браузеры…");
+        add("settings.browserImportNone", "No other browser found on this computer", "На этом компьютере не нашлось других браузеров");
+        add("settings.browserImportButton", "Import", "Перенести");
+        add("settings.browserImportRunning", "Importing…", "Переношу…");
+        add("settings.browserImportNoTab", "Open the browser tab first", "Сначала открой вкладку браузера");
+        add("settings.browserImportLocked", "Close %s and try again", "Закрой %s и попробуй снова");
+        add("settings.browserImportErrorGeneric", "Import failed: %s", "Перенос не удался: %s");
+        add("settings.browserImportDone", "Imported %d cookies from %s (%s)", "Перенесено куки: %d, из %s (%s)");
+        add("settings.browserImportSkipped", "%d could not be decrypted", "%d не удалось расшифровать");
         add("replay.title", "Replay", "Повтор");
         add("replay.save", "Save replay", "Сохранить повтор");
         add("replay.off", "The replay buffer is off (Settings, Recording)", "Буфер повтора выключен (Настройки, Запись)");

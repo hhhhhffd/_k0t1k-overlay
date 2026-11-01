@@ -898,6 +898,14 @@ final class BrowserView {
 
     // ---- keyboard shortcuts ----
 
+    /** Reloads the active tab, if it has an engine; used after cookies are imported into it. */
+    void reloadActive() {
+        BrowserEngine engine = tabs.get(active).engine;
+        if (engine != null) {
+            engine.reload();
+        }
+    }
+
     /** Whether Esc is for the view (a menu, a rename, a fullscreen video) rather than closing the overlay. */
     boolean wantsEscape() {
         BrowserEngine engine = tabs.get(active).engine;

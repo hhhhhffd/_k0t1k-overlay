@@ -1,5 +1,7 @@
 package dev.k0t1k.overlay.impl;
 
+import java.util.List;
+
 /**
  * The settings tab: a list of sections on the left and one scrolling column on the right. To add a
  * section, put its title key in {@link #SECTIONS}, write a method {@code float section(Ui ui, float x,
@@ -37,6 +39,15 @@ final class SettingsView {
     private final TextEdit homeEdit = new TextEdit();
     private long clearedAt;
     private boolean clearFailed;
+    private final TextEdit importAllowlist = new TextEdit();
+    /** Null until the io thread answers; empty once it has, with nothing found. */
+    private List<BrowserLogins.Source> importSources;
+    private boolean importSourcesRequested;
+    private BrowserLogins.Source importSource;
+    private BrowserLogins.Profile importProfile;
+    private boolean importRunning;
+    private String importMessage = "";
+    private long importMessageAt;
     /** The y of the top of the column, so a section can tell where it starts within it. */
     private float viewTop;
     /** Where each section starts, as an offset from the top of the column; set while drawing. */
@@ -47,6 +58,7 @@ final class SettingsView {
         this.options = overlay.options();
         this.strings = options.strings;
         homeEdit.set(options.browserHome);
+        importAllowlist.set(options.browserImportAllowlist);
         fakeCpu = new TextEdit(options.fakeCpu);
         fakeThreads = new TextEdit(Integer.toString(options.fakeThreads));
         fakeGpu = new TextEdit(options.fakeGpu);
@@ -330,6 +342,90 @@ final class SettingsView {
         if (clearedAt != 0 && System.currentTimeMillis() - clearedAt < 4000) {
             ui.text(ui.regular, 13, x + bw + 12, y + 7, clearFailed ? Ui.DANGER : Ui.OK,
                     strings.get(clearFailed ? "settings.browserStopped" : "settings.browserCleared"));
+        }
+        y += 48;
+        return browserImportSection(ui, x, y, w);
+    }
+
+    /** "Import sign-ins": an allowlist, the detected browsers and profiles as pills, and an import button. */
+    private float browserImportSection(Ui ui, float x, float y, float w) {
+        ui.rect(x, y, w, 1, Ui.LINE);
+        y += 20;
+        ui.text(ui.bold, 14, x, y, Ui.FG, strings.get("settings.browserImport"));
+        y += 24;
+        ui.textFit(ui.regular, 12, x, y, w, Ui.FAINT, strings.get("settings.browserImportHint"));
+        y += 24;
+        ui.text(ui.regular, 13, x, y + 4, Ui.MUTED, strings.get("settings.browserImportAllowlist"));
+        y += 26;
+        if (ui.field(importAllowlist, x, y, Math.min(420, w), 32, false, "")) {
+            options.browserImportAllowlist = importAllowlist.value();
+            changed();
+        }
+        y += 44;
+
+        if (!importSourcesRequested) {
+            importSourcesRequested = true;
+            overlay.detectBrowserLogins(sources -> {
+                importSources = sources;
+                if (!sources.isEmpty()) {
+                    importSource = sources.get(0);
+                    importProfile = importSource.profiles.get(0);
+                }
+            });
+        }
+        if (importSources == null) {
+            ui.textFit(ui.regular, 13, x, y, w, Ui.FAINT, strings.get("settings.browserImportScanning"));
+            return y + 32;
+        }
+        if (importSources.isEmpty()) {
+            ui.textFit(ui.regular, 13, x, y, w, Ui.FAINT, strings.get("settings.browserImportNone"));
+            return y + 32;
+        }
+
+        float px = x;
+        for (BrowserLogins.Source source : importSources) {
+            float pw = ui.measure(ui.bold, 13, source.displayName) + 20;
+            if (px + pw > x + w && px > x) {
+                px = x;
+                y += 32;
+            }
+            if (ui.pill(px, y, pw, 28, source.displayName, source == importSource) && source != importSource) {
+                importSource = source;
+                importProfile = source.profiles.get(0);
+            }
+            px += pw + 4;
+        }
+        y += 36;
+        if (importSource.profiles.size() > 1) {
+            px = x;
+            for (BrowserLogins.Profile profile : importSource.profiles) {
+                float pw = ui.measure(ui.bold, 13, profile.name) + 20;
+                if (px + pw > x + w && px > x) {
+                    px = x;
+                    y += 30;
+                }
+                if (ui.pill(px, y, pw, 26, profile.name, profile == importProfile) && profile != importProfile) {
+                    importProfile = profile;
+                }
+                px += pw + 4;
+            }
+            y += 36;
+        }
+
+        String label = strings.get(importRunning ? "settings.browserImportRunning" : "settings.browserImportButton");
+        float bw = ui.buttonWidth(label);
+        if (ui.button(x, y, bw, 32, label, false) && !importRunning) {
+            importRunning = true;
+            BrowserLogins.Source source = importSource;
+            BrowserLogins.Profile profile = importProfile;
+            overlay.importBrowserLogins(source, profile, message -> {
+                importRunning = false;
+                importMessage = message;
+                importMessageAt = System.currentTimeMillis();
+            });
+        }
+        if (!importMessage.isEmpty() && System.currentTimeMillis() - importMessageAt < 8000) {
+            ui.textFit(ui.regular, 13, x + bw + 12, y + 7, w - bw - 12, Ui.MUTED, importMessage);
         }
         return y + 48;
     }
