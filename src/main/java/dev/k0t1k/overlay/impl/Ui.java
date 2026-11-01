@@ -231,11 +231,6 @@ final class Ui {
         round(x + 1, y + 1, w - 2, h - 2, r - 1, fill);
     }
 
-    /** Draws the batch's current image (see {@link Batch#image}) into the rectangle. */
-    void image(float x, float y, float w, float h) {
-        batch.image(x * scale, y * scale, w * scale, h * scale, 0xffffffff);
-    }
-
     /** Draws a part of the batch's image with its alpha, in a square at whole pixels. */
     void imagePart(float x, float y, float size, float u0, float v0, float u1, float v1) {
         batch.imagePart(Math.round(x * scale), Math.round(y * scale), Math.round(size * scale), Math.round(size * scale),

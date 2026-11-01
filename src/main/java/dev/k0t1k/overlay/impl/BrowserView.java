@@ -259,7 +259,10 @@ final class BrowserView {
             }
         }
         for (BrowserData.Entry e : data.bookmarks) {
-            favicons.want(host(e.url));
+            String host = host(e.url);
+            favicons.want(host);
+            // A bookmark has an icon from its first start, before its site was ever opened.
+            favicons.page(host, "", false);
         }
         Browser.Frame frame = tab.frame;
         long version = engine.frame(frame.version, frame.pixels, frame.size);

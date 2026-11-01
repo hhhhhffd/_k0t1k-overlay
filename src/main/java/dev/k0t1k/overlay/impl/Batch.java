@@ -137,9 +137,9 @@ final class Batch {
         quad(x0, y0, x1, y1, u0, v0, u1, v1, 0, 0, 0, 1, argb);
     }
 
-    /** Draws the whole {@link #image} into the rectangle; the colour's alpha fades it. */
+    /** Draws the {@link #image} without its icon rows into the rectangle; the colour's alpha fades it. */
     void image(float x, float y, float w, float h, int argb) {
-        quad(x, y, x + w, y + h, 0, 0, 1, 1, 0, 0, 0, 2, argb);
+        quad(x, y, x + w, y + h, 0, 0, 1, (float) (imageHeight - ICON_ROWS) / imageHeight, 0, 0, 0, 2, argb);
     }
 
     /** Draws a part of the {@link #image} with its alpha, uv in 0..1 of the whole picture. */
