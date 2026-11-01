@@ -34,7 +34,7 @@ final class BrowserView {
     private static final float MARK_H = 28;
     private static final int MAX_TABS = 30;
     private static final int[] ICON_COLORS = {
-        0xff7c4fc0, 0xff2f80b8, 0xff2e9e6b, 0xffc0802f, 0xffb84f6f, 0xff5a6bc8, 0xff8a9a2f, 0xff3a9aa8,
+        0xffc0504f, 0xff2f80b8, 0xff2e9e6b, 0xffc0802f, 0xffb84f6f, 0xff5a6bc8, 0xff8a9a2f, 0xff3a9aa8,
     };
     // GLFW key codes the view reacts to that Keys does not name.
     private static final int KEY_F5 = 294;
@@ -454,7 +454,7 @@ final class BrowserView {
                 double angle = i * Math.PI / 4;
                 int alpha = 60 + 195 * (((i - phase) % 8 + 8) % 8) / 7;
                 ui.round(x + 6.5f + 6.5f * (float) Math.cos(angle), y + 6.5f + 6.5f * (float) Math.sin(angle), 3, 3, 1.5f,
-                        (alpha << 24) | 0xa259f7);
+                        (alpha << 24) | (Ui.ACCENT & 0xffffff));
             }
             return;
         }
