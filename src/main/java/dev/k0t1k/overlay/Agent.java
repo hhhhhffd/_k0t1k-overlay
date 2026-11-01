@@ -3,6 +3,7 @@ package dev.k0t1k.overlay;
 import java.lang.instrument.Instrumentation;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.util.Arrays;
 import java.util.function.Function;
 
 import net.bytebuddy.agent.builder.AgentBuilder;
@@ -33,7 +34,7 @@ import static net.bytebuddy.matcher.ElementMatchers.not;
 public final class Agent {
     static final String CALL = "dev.k0t1k.overlay.call";
 
-    private static final String[] TYPES = {
+    private static final String[] WINDOW_TYPES = {
         "org.lwjgl.glfw.GLFW",
         "org.lwjgl.sdl.SDLVideo",
         "org.lwjgl.sdl.SDLEvents",
@@ -46,6 +47,23 @@ public final class Agent {
         "org.lwjgl.input.Keyboard",
         "org.lwjgl.input.Mouse",
     };
+
+    /**
+     * Where the F3 screen takes the CPU, GPU and memory from (see {@code FakeHardware}). These never
+     * start the overlay: they only answer once a window library hook has.
+     */
+    private static final String[] HARDWARE_TYPES = {
+        "net.minecraft.client.gui.components.debug.DebugEntrySystemSpecs",
+        "net.minecraft.client.gui.components.debug.DebugEntryMemory",
+        "com.mojang.blaze3d.platform.GLX",
+        "org.lwjgl.opengl.GL11",
+        "org.lwjgl.opengl.GL11C",
+    };
+
+    private static final ElementMatcher<MethodDescription> HARDWARE_ENTER = named("display");
+
+    private static final ElementMatcher<MethodDescription> HARDWARE_EXIT = named("_getCpuInfo")
+            .or(named("glGetString").and(takesArguments(int.class)));
 
     /** Hooks that run before the method and may replace its arguments or skip it. */
     private static final ElementMatcher<MethodDescription> ENTER = namedOneOf(
@@ -84,12 +102,16 @@ public final class Agent {
 
         new AgentBuilder.Default()
                 .disableClassFormatChanges()
-                .ignore(not(namedOneOf(TYPES)))
+                .ignore(not(namedOneOf(WINDOW_TYPES).or(namedOneOf(HARDWARE_TYPES))))
                 .with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())
-                .type(namedOneOf(TYPES))
+                .type(namedOneOf(WINDOW_TYPES))
                 .transform((builder, type, loader, module, domain) -> builder
                         .visit(Advice.to(Enter.class).on(ENTER))
                         .visit(Advice.to(Exit.class).on(EXIT)))
+                .type(namedOneOf(HARDWARE_TYPES))
+                .transform((builder, type, loader, module, domain) -> builder
+                        .visit(Advice.to(Enter.class).on(HARDWARE_ENTER))
+                        .visit(Advice.to(Exit.class).on(HARDWARE_EXIT)))
                 .installOn(instrumentation);
     }
 
@@ -156,7 +178,11 @@ public final class Agent {
         public Object apply(Object[] call) {
             Function<Object[], Object> overlay = impl;
             if (overlay == null) {
-                overlay = init((Class<?>) call[0]);
+                Class<?> type = (Class<?>) call[0];
+                if (Arrays.asList(HARDWARE_TYPES).contains(type.getName())) {
+                    return null;
+                }
+                overlay = init(type);
                 if (overlay == null) {
                     return null;
                 }

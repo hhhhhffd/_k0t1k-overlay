@@ -36,6 +36,15 @@ final class Strings {
         add("toast.test", "Test notification", "Проверить уведомление");
         add("toast.testBody", "This is how notifications look here", "Так выглядят уведомления здесь");
         add("settings.replay", "Replay", "Повтор");
+        add("settings.hardware", "Fake hardware", "Подмена железа");
+        add("hw.toggle", "Show fake hardware on the F3 screen", "Показывать на экране F3 другое железо");
+        add("hw.cpu", "CPU name", "Процессор");
+        add("hw.threads", "CPU threads", "Потоков процессора");
+        add("hw.gpu", "GPU name", "Видеокарта");
+        add("hw.vendor", "GPU vendor", "Производитель GPU");
+        add("hw.memory", "Max memory, MiB", "Макс. память, МиБ");
+        add("hw.hint", "Only the F3 screen changes; the game and crash reports keep the real hardware. Memory applies on Minecraft 26.x only.",
+                "Меняется только экран F3; игра и отчёты о сбоях видят настоящее железо. Память работает только на Minecraft 26.x.");
         add("tab.notes", "Notes", "Заметки");
         add("tab.perf", "Performance", "Производительность");
         add("hint.close", "Shift+Tab to close", "Shift+Tab — закрыть");

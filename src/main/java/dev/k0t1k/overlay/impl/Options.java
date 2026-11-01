@@ -80,6 +80,14 @@ final class Options {
     boolean bookmarksBar = true;
     /** The launcher's interface zoom in percent, or 0 when it is on automatic. */
     final int launcherScale;
+    /** Whether the F3 screen shows the fake hardware below instead of the real one. */
+    boolean fakeHardware;
+    String fakeCpu = "Intel Core i9-14900K";
+    int fakeThreads = 32;
+    String fakeGpu = "NVIDIA GeForce RTX 8080";
+    String fakeVendor = "NVIDIA Corporation";
+    /** Maximum memory in MiB, shown on Minecraft 26.x only. */
+    int fakeMemory = 65536;
     /** Whether the overlay shows its own crash window; a launcher with its own can turn it off. */
     final boolean crashDialog;
     final String lang;
@@ -176,6 +184,12 @@ final class Options {
         browserHome = saved.getProperty("browserHome", browserHome);
         browserSearch = saved.getProperty("browserSearch", browserSearch);
         bookmarksBar = Boolean.parseBoolean(saved.getProperty("bookmarksBar", "true"));
+        fakeHardware = Boolean.parseBoolean(saved.getProperty("fakeHardware", "false"));
+        fakeCpu = saved.getProperty("fakeCpu", fakeCpu);
+        fakeGpu = saved.getProperty("fakeGpu", fakeGpu);
+        fakeVendor = saved.getProperty("fakeVendor", fakeVendor);
+        fakeThreads = number(saved, "fakeThreads", fakeThreads);
+        fakeMemory = number(saved, "fakeMemory", fakeMemory);
     }
 
     private static int intSetting(Properties saved, String key, int fallback, int min, int max) {
@@ -192,6 +206,14 @@ final class Options {
             return Float.isNaN(value) ? 0 : Math.max(0, Math.min(1, value));
         } catch (NumberFormatException e) {
             return 0;
+        }
+    }
+
+    private static int number(Properties saved, String key, int fallback) {
+        try {
+            return Integer.parseInt(saved.getProperty(key, Integer.toString(fallback)));
+        } catch (NumberFormatException e) {
+            return fallback;
         }
     }
 
@@ -218,6 +240,12 @@ final class Options {
         snapshot.setProperty("browserHome", browserHome);
         snapshot.setProperty("browserSearch", browserSearch);
         snapshot.setProperty("bookmarksBar", Boolean.toString(bookmarksBar));
+        snapshot.setProperty("fakeHardware", Boolean.toString(fakeHardware));
+        snapshot.setProperty("fakeCpu", fakeCpu);
+        snapshot.setProperty("fakeThreads", Integer.toString(fakeThreads));
+        snapshot.setProperty("fakeGpu", fakeGpu);
+        snapshot.setProperty("fakeVendor", fakeVendor);
+        snapshot.setProperty("fakeMemory", Integer.toString(fakeMemory));
         return () -> {
             try {
                 Files.createDirectories(dataDir);

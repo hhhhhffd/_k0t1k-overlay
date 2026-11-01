@@ -51,7 +51,8 @@ Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it
 | **Replay** | The last 30 seconds kept in memory; **Shift+F2** or the button in Tools saves them as a GIF or a video. |
 | **Music** | What the system plays (Spotify, a browser tab, any player) with previous, play/pause and next, and a toast when a new track starts. |
 | **Crash window** | After a crash, shows the reason and the report and uploads them to mclo.gs only when the player clicks "Send to support". |
-| **Settings** | Overlay settings in sections: the HUD and its corner, the cat, the replay buffer. |
+| **Settings** | Overlay settings in sections: the interface scale, the HUD and its corner, the cat, the replay buffer, fake hardware. |
+| **Fake hardware** | A joke: the F3 debug screen shows a CPU name and thread count, a GPU name and vendor, and (Minecraft 26.x only) a maximum memory that you type in Settings. Off by default. Only F3 changes; the game, the Performance tab and crash reports keep the real hardware. |
 | **Cat** | The launcher's cat sits in a corner and reacts to deaths, advancements, a five minute AFK, timers, screenshots and achievements with a speech bubble (can be turned off in Settings). |
 
 The player's position, dimension and health are read by reflection on `net.minecraft` classes, so they
@@ -129,6 +130,8 @@ dispatcher can replace the arguments or skip the call. After the call, it can re
 | `Keyboard.isKeyDown`, `Mouse.isButtonDown`, `Mouse.getDX/getDY/getDWheel` | LWJGL 2: keys and buttons read as released and the mouse as still while the overlay is open |
 | `Mouse.setGrabbed` | LWJGL 2: holds back the game's grab changes until the overlay closes |
 | `glfwSetInputMode(GLFW_CURSOR)`, `SDL_SetWindowRelativeMouseMode`, `SDL_WarpMouseInWindow`, `SDL_Start/StopTextInput` | Holds back the game's cursor and text input changes until the overlay closes |
+| `DebugEntrySystemSpecs#display`, `DebugEntryMemory#display` | Minecraft 26.x, fake hardware: the F3 line receiver is replaced by a proxy that rewrites the CPU, display vendor, GPU and memory lines (the proxy is where a custom F3 would add lines) |
+| `GLX._getCpuInfo`, `GL11#glGetString`, `GL11C#glGetString` (vendor, renderer) | Minecraft 1.8 to 1.21.11, fake hardware: the return value is replaced, only on the render thread while F3 is shown (tracked from key events; the overlay's own query is exempt). These hooks never start the overlay |
 
 A key or button release still reaches the game if the game saw the press, so held keys do not stick.
 

@@ -60,6 +60,7 @@ public final class Overlay implements Function<Object[], Object> {
     private final NotesView notesView;
     private final PerfView perfView;
     private final GameState game = new GameState();
+    private final FakeHardware hardware;
     private final Stats stats;
     private final Timers timers;
     private final Screenshots screenshots;
@@ -164,6 +165,7 @@ public final class Overlay implements Function<Object[], Object> {
         modsView = new ModsView(mods, strings, this);
         profileView = new ProfileView(stats, strings);
         settingsView = new SettingsView(this);
+        hardware = new FakeHardware(this, options);
         media = new Media(ioThread, render, this::report);
         media.onTrack = track -> {
             if (!open) {
@@ -253,6 +255,12 @@ public final class Overlay implements Function<Object[], Object> {
                 case "getDWheel":
                     platform = legacy();
                     return legacy.call((Class<?>) call[0], method, args, exit ? call[3] : null, exit);
+                // The fake hardware of the F3 screen
+                case "display":
+                    return hardware.display(args);
+                case "_getCpuInfo":
+                case "glGetString":
+                    return hardware.exit(method, args);
                 case "vkCreateSwapchainKHR":
                 case "vkDestroySwapchainKHR":
                 case "vkGetDeviceQueue":
@@ -417,6 +425,10 @@ public final class Overlay implements Function<Object[], Object> {
     /** Deletes the browser's cookies (logins); false when the browser is not running. */
     boolean clearBrowserCookies() {
         return browser.clearCookies();
+    }
+
+    FakeHardware hardware() {
+        return hardware;
     }
 
     void saveSettings() {
@@ -661,6 +673,7 @@ public final class Overlay implements Function<Object[], Object> {
             return true;
         }
         if (!open) {
+            hardware.key(key, action);
             if (press) {
                 gameKeys.add(key);
             }
@@ -762,7 +775,12 @@ public final class Overlay implements Function<Object[], Object> {
             // Throws without a context made current by the game; caught by apply.
             GL.getCapabilities();
             gl = new GlRenderer();
-            perfView.renderer = GL11.glGetString(GL11.GL_RENDERER) + " · OpenGL " + GL11.glGetString(GL11.GL_VERSION);
+            hardware.bypass = true;
+            try {
+                perfView.renderer = GL11.glGetString(GL11.GL_RENDERER) + " · OpenGL " + GL11.glGetString(GL11.GL_VERSION);
+            } finally {
+                hardware.bypass = false;
+            }
         }
         gl.draw(batch);
     }
