@@ -100,7 +100,7 @@ final class RecordingView {
         y += rowHeight + 4;
         if ("custom".equals(options.quality)) {
             float sw = Math.min(260, w - 120);
-            int bitrate = Math.round(slider(ui, bitrateSlider, x, y + 4, sw, 1, 100, 1, options.bitrate));
+            int bitrate = Math.round(slider(ui, bitrateSlider, x, y - 3, sw, 1, 100, 1, options.bitrate));
             if (bitrate != options.bitrate) {
                 options.bitrate = bitrate;
                 changed();
@@ -231,12 +231,12 @@ final class RecordingView {
         y += 26;
         if (on) {
             float sw = Math.min(260, w - 120);
-            int seconds = Math.round(slider(ui, lengthSlider, x, y + 2, sw, 15, 300, 5, options.replaySeconds));
+            int seconds = Math.round(slider(ui, lengthSlider, x, y - 3, sw, 15, 300, 5, options.replaySeconds));
             if (seconds != options.replaySeconds) {
                 options.replaySeconds = seconds;
                 changed();
             }
-            ui.text(ui.bold, 13, x + sw + 12, y + 2, Ui.FG, strings.format("rec.seconds", options.replaySeconds));
+            ui.text(ui.bold, 13, x + sw + 12, y + 4, Ui.FG, strings.format("rec.seconds", options.replaySeconds));
             y += 28;
         }
         ui.textFit(ui.regular, 12, x, y, w, Ui.FAINT, strings.get("rec.replayHint"));
@@ -271,8 +271,8 @@ final class RecordingView {
             boolean now = ui.checkbox(x + 20, y, strings.get(names[i]), on[i]);
             float sx = x + 20 + 24 + labelWidth + 20;
             float sw = Math.max(80, Math.min(220, x + w - sx - 56));
-            int value = Math.round(slider(ui, volumeSliders[i], sx, y, sw, 0, 200, 5, volume[i]));
-            ui.text(ui.regular, 13, sx + sw + 10, y, Ui.MUTED, value + "%");
+            int value = Math.round(slider(ui, volumeSliders[i], sx, y - 6, sw, 0, 200, 5, volume[i]));
+            ui.text(ui.regular, 13, sx + sw + 10, y + 1, Ui.MUTED, value + "%");
             if (now != on[i] || value != volume[i]) {
                 if (i == 0) {
                     options.audioGame = now;

@@ -64,7 +64,7 @@ The agent creates these files on demand:
 |---|---|
 | `chat-history.tsv` | Every chat line ever received, one per line: `epoch ms TAB server TAB text`. Backslash escapes tab, newline and itself. Append-only, so it grows forever, by roughly 100 bytes per message. |
 | `notes/<id>.txt` | One UTF-8 file per note. |
-| `overlay.properties` | The settings: HUD on/off and its corner, the cat, the replay buffer, the interface scale. |
+| `overlay.properties` | The settings: HUD on/off and its corner, the cat, the interface scale, recording and the hotkeys. |
 
 - Several games can run at the same time with the same `dataDir`. Each appends to the history in
   one write per batch.
@@ -99,8 +99,10 @@ The jar ships the same way as the RatScan and packconv plugins:
 
 ## What to expect at runtime
 
-- **Hotkey:** Shift+Tab opens and closes the overlay, Esc closes it. The hotkey is not
-  configurable yet. While a game text field is focused, Shift+Tab still goes to the overlay.
+- **Hotkey:** Shift+Tab opens and closes the overlay, Esc closes it; the player can rebind it in
+  Settings. While a game text field is focused, the hotkey still goes to the overlay. Shift+F10 starts
+  and stops a recording and Shift+F2 saves the replay buffer, both rebindable. Recording needs ffmpeg,
+  which the player downloads from Settings, and the agent writes recordings to `<gameDir>/recordings`.
 - **Supported setups:**
   - Minecraft 1.8–1.12.2 on LWJGL 2 with OpenGL
   - Minecraft 1.13–26.1 on GLFW with OpenGL

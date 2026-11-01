@@ -35,7 +35,7 @@ The agent hooks LWJGL with Byte Buddy and never touches Minecraft classes. It dr
 frame and takes input before the game sees it. It ships with the
 [_k0t1k launcher](https://github.com/hhhhhffd/_k0t1k) as a signed plugin, but any launcher can add it with `-javaagent`.
 
-Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it.
+Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it. The key is configurable in Settings, Hotkeys.
 
 ## Features
 
@@ -48,10 +48,10 @@ Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it
 | **Profile** | Lifetime stats (play time, sessions, deaths, advancements, screenshots, crashes) and the launcher's achievements on top of them. |
 | **Performance** | FPS, frame time, 1% low, a frame time graph, heap, GC and the game's CPU load, plus an optional HUD in a corner of the screen (turned on in Settings). |
 | **Browser** | A real Chromium (JCEF, off-screen rendering) in its own tab: back, forward, reload, an address bar that also searches, quick links (Minecraft Wiki, Modrinth, CurseForge, YouTube). |
-| **Replay** | The last 30 seconds kept in memory; **Shift+F2** or the button in Tools saves them as a GIF or a video. |
+| **Recording** | OBS-like capture with ffmpeg: **Shift+F10** starts and stops a recording, and a replay buffer keeps the last 15 to 300 seconds for **Shift+F2** or the button in Tools. Full resolution, 30 or 60 fps, hardware encoders, game, desktop and microphone audio on separate tracks, and a GIF from the last clip. |
 | **Music** | What the system plays (Spotify, a browser tab, any player) with previous, play/pause and next, and a toast when a new track starts. |
 | **Crash window** | After a crash, shows the reason and the report and uploads them to mclo.gs only when the player clicks "Send to support". |
-| **Settings** | Overlay settings in sections: the HUD and its corner, the cat, the replay buffer. |
+| **Settings** | Overlay settings in sections: the HUD and its corner, the cat, recording (ffmpeg, encoder, format, quality, audio, GIF), hotkeys. |
 | **Cat** | The launcher's cat sits in a corner and reacts to deaths, advancements, a five minute AFK, timers, screenshots and achievements with a speech bubble (can be turned off in Settings). |
 
 The player's position, dimension and health are read by reflection on `net.minecraft` classes, so they
@@ -70,10 +70,35 @@ button is hidden and deaths are not counted. Advancements are read from the chat
   agent as `cef-bridge.jar` and loads next to JCEF in a class loader of its own. Windows and Linux on
   x64; the page is drawn by the OpenGL 3.2 and Vulkan renderers (not on LWJGL 2). CEF needs `--no-first-run` off screen: its EULA
   dialog would otherwise end the browser process with exit code 28.
-- **Replay.** Frames are kept as JPEG (about 1 MB a second) and saved to `<gameDir>/replays` as a GIF
-  or a video (MP4 when `ffmpeg` is on PATH, otherwise a Motion-JPEG AVI). Frames are scaled down on the
-  GPU and read back through pixel buffers with fences (OpenGL) or a blit and a host buffer behind the
-  frame's fence (Vulkan), so the game never waits for them. Not on LWJGL 2.
+- **Recording.** The overlay encodes with `ffmpeg`, which it downloads on request (Settings, Recording:
+  a pinned build checked against its SHA-256, into `<dataDir>/ffmpeg`; on Linux an ffmpeg on PATH is
+  used first) or takes from PATH or a path the player gives. Each encoder (NVENC, AMF, QSV, VAAPI,
+  x264, in H.264, HEVC and AV1 where they exist) is tried once on a few black frames, and only those
+  that work are offered; Auto picks the best hardware H.264, else x264.
+  - *Capture.* Frames are taken before the overlay draws, so its own interface is never in the video, at
+    the game's resolution (or 1080p / 720p) and 30 or 60 fps. OpenGL scales the frame into a texture and a
+    shader converts it to NV12 (BT.709, limited range) on the GPU; it is read back through pixel buffers
+    with fences, so the CPU copies `w * h * 1.5` bytes. Vulkan blits the swapchain image to the recording
+    size into a host buffer behind the frame's fence and converts RGBA to NV12 on the writer thread in
+    Java, which avoids another Vulkan pipeline. A pool of three buffers goes to a writer thread that
+    does one write per frame to ffmpeg's standard input; with no free buffer the frame is dropped and
+    counted (shown in Tools), the render thread never waits. Not on LWJGL 2.
+  - *Recording.* Shift+F10 starts and stops; a red dot and timer show in a corner (not in the video). MKV is
+    the default and survives a crash; MP4 and MOV are fragmented for the same reason; "convert to MP4
+    after stopping" remuxes with `-c copy`. Quality is Low, Medium, High (constant quality) or a bitrate.
+  - *Replay buffer.* The same encoder writes two-second Matroska segments into `<dataDir>/replay-buffer`,
+    the oldest are deleted, and saving joins the finished ones with `ffmpeg -f concat -c copy`, so it takes
+    no re-encoding time. The buffer and a recording can run together as two ffmpeg processes fed the
+    same frames, at the price of encoding twice (one more NVENC session). Changing an encoding setting
+    restarts the buffer. Files go to `<gameDir>/recordings` or the folder chosen in Settings.
+  - *Audio.* Game, desktop (everything except the game) and microphone, each with a volume, as an AAC
+    mix first and then one track per source. Each source is a helper process whose raw 48 kHz stereo
+    samples the overlay forwards to ffmpeg over a loopback socket. On Windows the helper is `cap.ps1`,
+    which compiles `Cap.cs` with PowerShell and uses WASAPI (the game's own sound needs Windows 10 2004
+    or later; a source that fails is left out and reported once). On Linux it is `parec`: the game's
+    sink input, the default monitor (which includes the game) or the default source; best effort.
+  - *GIF.* Made from the last saved clip, the last 5, 10 or 15 seconds at 10 to 50 fps and 480 to 800
+    px, with a palette computed for that clip (`palettegen` and `paletteuse`).
 - **Music.** Windows uses the system media controls through a PowerShell child (`media.ps1`), Linux
   uses `playerctl`.
 - **Crash window.** When the game exits after writing a crash report, the shutdown hook writes what
@@ -295,8 +320,11 @@ Options are `key=value` pairs separated by commas after `=`. Each can also be se
 | `screenshots.tsv` | A caption per screenshot, `file TAB epoch ms TAB instance TAB dimension TAB x y z` |
 | `crashes/crash_<time>.txt` | The crash window's notes from the live game |
 | `browser/` | The downloaded JCEF (`jcef-api.jar`, `cef-bridge.jar`, `cef-152.0.6/`) and the browser profile |
+| `ffmpeg/` | The downloaded ffmpeg and the cache of which encoders worked |
+| `audio/` | The audio helper scripts, rewritten on every recording |
+| `replay-buffer/` | The replay buffer's segments, deleted when it stops |
 
-Besides these, the agent writes only saved replays to `<gameDir>/replays`. On exit, a shutdown hook
+Besides these, the agent writes only recordings, saved replays and GIFs to `<gameDir>/recordings` (or the folder set in Settings). On exit, a shutdown hook
 stores the last chat lines, any unsaved notes and the stats.
 
 </details>
@@ -310,7 +338,7 @@ disables itself, and the game keeps running.
 
 ## Known limitations
 
-- Shift+Tab always goes to the overlay, even while a game text field has focus, so the game's reverse
+- The overlay hotkey (Shift+Tab by default) always goes to the overlay, even while a game text field has focus, so the game's reverse
   tab completion does not get it.
 - Two games started from the same game folder both read its `latest.log`, so they store every message
   twice.
