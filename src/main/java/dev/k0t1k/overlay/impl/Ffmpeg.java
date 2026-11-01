@@ -66,6 +66,8 @@ final class Ffmpeg {
     /** The encoders that worked in a test run, in {@link #CANDIDATES} order; empty until probed. */
     private volatile List<String> encoders = Collections.emptyList();
     private volatile boolean probing;
+    /** Whether this ffmpeg has the animated WebP encoder (not every build includes libwebp). */
+    private volatile boolean webp;
 
     private final Options options;
     private final Path folder;
@@ -89,6 +91,10 @@ final class Ffmpeg {
 
     List<String> encoders() {
         return encoders;
+    }
+
+    boolean hasWebp() {
+        return webp;
     }
 
     boolean probing() {
@@ -118,6 +124,7 @@ final class Ffmpeg {
         path = found;
         if (found == null) {
             encoders = Collections.emptyList();
+            webp = false;
             state = build == null && "auto".equals(options.ffmpegMode) ? State.UNSUPPORTED : State.MISSING;
             return;
         }
@@ -127,6 +134,9 @@ final class Ffmpeg {
 
     private String locate() {
         if ("custom".equals(options.ffmpegMode)) {
+            if (!Options.validFolder(options.ffmpegPath)) {
+                return null;
+            }
             Path custom = Paths.get(options.ffmpegPath.trim());
             if (Files.isDirectory(custom)) {
                 custom = custom.resolve(WINDOWS ? "ffmpeg.exe" : "ffmpeg");
@@ -161,8 +171,9 @@ final class Ffmpeg {
         } catch (IOException e) {
             // No cache yet: probe.
         }
-        if (key.equals(saved.getProperty("key"))) {
+        if (key.equals(saved.getProperty("key")) && saved.getProperty("webp") != null) {
             encoders = split(saved.getProperty("encoders", ""));
+            webp = Boolean.parseBoolean(saved.getProperty("webp"));
             return;
         }
         probing = true;
@@ -174,9 +185,11 @@ final class Ffmpeg {
                 }
             }
             encoders = Collections.unmodifiableList(working);
+            webp = works(ffmpeg, "libwebp_anim");
             Properties out = new Properties();
             out.setProperty("key", key);
             out.setProperty("encoders", String.join(",", working));
+            out.setProperty("webp", Boolean.toString(webp));
             Files.createDirectories(folder);
             try (OutputStream file = Files.newOutputStream(cache)) {
                 out.store(file, "ffmpeg encoders that worked in a test run");
@@ -423,6 +436,19 @@ final class Ffmpeg {
             args.addAll(Arrays.asList("-b:v", rate, "-maxrate", rate, "-bufsize", 2 * bitrate + "M"));
         }
         return args;
+    }
+
+    /**
+     * The command for an animated WebP of the last {@code seconds} of {@code clip}. {@code width} 0 keeps the
+     * clip's size. Quality is the encoder's 0 to 100 (in lossless mode it is the effort, not the fidelity).
+     */
+    static List<String> webpArgs(String binary, Path clip, Path out, int seconds, int fps, int width, int quality,
+            boolean lossless) {
+        String filter = "fps=" + fps + (width > 0 ? ",scale='min(" + width + ",iw)':-2:flags=lanczos" : "");
+        return Arrays.asList(binary, "-hide_banner", "-loglevel", "error", "-y", "-sseof", "-" + seconds,
+                "-i", clip.toString(), "-an", "-vf", filter, "-c:v", "libwebp_anim", "-lossless", lossless ? "1" : "0",
+                "-quality", String.valueOf(quality), "-compression_level", "4", "-loop", "0", "-preset", "default",
+                out.toString());
     }
 
     /** The extension of a container setting. */

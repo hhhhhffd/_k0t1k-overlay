@@ -15,9 +15,10 @@ final class RecordingView {
     private static final String[] RESOLUTIONS = {"source", "1080", "720"};
     private static final String[] QUALITIES = {"low", "medium", "high", "custom"};
     private static final int[] FPS = {30, 60};
-    private static final int[] GIF_FPS = {10, 20, 25, 50};
-    private static final int[] GIF_WIDTH = {480, 640, 800};
-    private static final int[] GIF_SECONDS = {5, 10, 15};
+    private static final int[] WEBP_FPS = {15, 20, 25, 30, 50, 60};
+    /** 0 keeps the clip's width. */
+    private static final int[] WEBP_WIDTH = {480, 640, 960, 1280, 0};
+    private static final int[] WEBP_SECONDS = {5, 10, 15, 30};
 
     private final Overlay overlay;
     private final Options options;
@@ -26,6 +27,7 @@ final class RecordingView {
     private final TextEdit pathEdit;
     private final Object bitrateSlider = new Object();
     private final Object lengthSlider = new Object();
+    private final Object webpSlider = new Object();
     private final Object[] volumeSliders = {new Object(), new Object(), new Object()};
     /** A setting changed and is saved once no slider is being dragged. */
     private boolean dirty;
@@ -34,6 +36,8 @@ final class RecordingView {
     private float rowHeight;
     /** Which hotkey waits for a key: 0 open, 1 record, 2 save, -1 none. */
     private int capturing = -1;
+    /** Why the last rebinding was refused; shown under the hotkeys until the next attempt. */
+    private String hotkeyProblem = "";
 
     RecordingView(Overlay overlay) {
         this.overlay = overlay;
@@ -112,18 +116,23 @@ final class RecordingView {
 
         y = label(ui, "rec.folder", x, y);
         float openW = ui.buttonWidth(strings.get("tools.openFolder"));
-        if (ui.field(folderEdit, x, y, w - openW - 8, 32, false, options.recordingsFolder().toString())) {
-            options.outputDir = folderEdit.value();
+        if (ui.field(folderEdit, x, y, w - openW - 8, 32, false, options.recordingsFolder().toString())
+                && Options.validFolder(folderEdit.value())) {
+            options.outputDir = folderEdit.value(); // an invalid path is never saved
             changed();
         }
         if (ui.button(x + w - openW, y + 2, openW, 28, strings.get("tools.openFolder"), false)) {
             openFolder();
         }
         y += 48;
+        if (!Options.validFolder(folderEdit.value())) {
+            ui.textFit(ui.regular, 12, x, y - 12, w, Ui.DANGER, strings.get("rec.folderInvalid"));
+            y += 18;
+        }
 
         y = replayRow(ui, x, y, w);
         y = audioRows(ui, x, y, w);
-        y = gifRows(ui, x, y, w);
+        y = webpRows(ui, x, y, w);
 
         if (dirty && !dragged) {
             dirty = false;
@@ -296,27 +305,55 @@ final class RecordingView {
         return y + 36;
     }
 
-    private float gifRows(Ui ui, float x, float y, float w) {
-        y = label(ui, "rec.gif", x, y);
-        int fps = pills(ui, x, y, w, new String[] {"10 fps", "20 fps", "25 fps", "50 fps"}, Math.max(0, indexOf(GIF_FPS, options.gifFps)));
-        if (GIF_FPS[fps] != options.gifFps) {
-            options.gifFps = GIF_FPS[fps];
+    private float webpRows(Ui ui, float x, float y, float w) {
+        y = label(ui, "rec.webp", x, y);
+        String[] fpsLabels = new String[WEBP_FPS.length];
+        for (int i = 0; i < fpsLabels.length; i++) {
+            fpsLabels[i] = WEBP_FPS[i] + " fps";
+        }
+        int fps = pills(ui, x, y, w, fpsLabels, Math.max(0, indexOf(WEBP_FPS, options.webpFps)));
+        if (WEBP_FPS[fps] != options.webpFps) {
+            options.webpFps = WEBP_FPS[fps];
             changed();
         }
         y += rowHeight + 4;
-        int width = pills(ui, x, y, w, new String[] {"480 px", "640 px", "800 px"}, Math.max(0, indexOf(GIF_WIDTH, options.gifWidth)));
-        if (GIF_WIDTH[width] != options.gifWidth) {
-            options.gifWidth = GIF_WIDTH[width];
+        String[] widthLabels = new String[WEBP_WIDTH.length];
+        for (int i = 0; i < widthLabels.length; i++) {
+            widthLabels[i] = WEBP_WIDTH[i] == 0 ? strings.get("rec.source") : WEBP_WIDTH[i] + " px";
+        }
+        int width = pills(ui, x, y, w, widthLabels, Math.max(0, indexOf(WEBP_WIDTH, options.webpWidth)));
+        if (WEBP_WIDTH[width] != options.webpWidth) {
+            options.webpWidth = WEBP_WIDTH[width];
             changed();
         }
         y += rowHeight + 4;
-        int seconds = pills(ui, x, y, w, new String[] {"5 s", "10 s", "15 s"}, Math.max(0, indexOf(GIF_SECONDS, options.gifSeconds)));
-        if (GIF_SECONDS[seconds] != options.gifSeconds) {
-            options.gifSeconds = GIF_SECONDS[seconds];
+        String[] secondLabels = new String[WEBP_SECONDS.length];
+        for (int i = 0; i < secondLabels.length; i++) {
+            secondLabels[i] = WEBP_SECONDS[i] + " s";
+        }
+        int seconds = pills(ui, x, y, w, secondLabels, Math.max(0, indexOf(WEBP_SECONDS, options.webpSeconds)));
+        if (WEBP_SECONDS[seconds] != options.webpSeconds) {
+            options.webpSeconds = WEBP_SECONDS[seconds];
             changed();
         }
-        y += rowHeight + 4;
-        ui.textFit(ui.regular, 12, x, y, w, Ui.FAINT, strings.get("rec.gifHint"));
+        y += rowHeight + 6;
+        boolean lossless = ui.checkbox(x, y, strings.get("rec.webpLossless"), options.webpLossless);
+        if (lossless != options.webpLossless) {
+            options.webpLossless = lossless;
+            changed();
+        }
+        y += 26;
+        if (!lossless) {
+            float sw = Math.min(260, w - 120);
+            int quality = Math.round(slider(ui, webpSlider, x, y - 3, sw, 50, 100, 1, options.webpQuality));
+            if (quality != options.webpQuality) {
+                options.webpQuality = quality;
+                changed();
+            }
+            ui.text(ui.bold, 13, x + sw + 12, y + 4, Ui.FG, strings.format("rec.webpQuality", options.webpQuality));
+            y += 30;
+        }
+        ui.textFit(ui.regular, 12, x, y, w, Ui.FAINT, strings.get("rec.webpHint"));
         return y + 28;
     }
 
@@ -363,10 +400,24 @@ final class RecordingView {
             y += 38;
         }
         ui.textFit(ui.regular, 12, x, y, w, Ui.FAINT, strings.get("hotkeys.hint"));
+        if (!hotkeyProblem.isEmpty()) {
+            y += 18;
+            ui.textFit(ui.regular, 12, x, y, w, Ui.DANGER, hotkeyProblem);
+        }
         return y + 28;
     }
 
+    /** Binds a combination to an action unless another action already has it (one of them would never fire). */
     private void setHotkey(int row, int combo) {
+        String[] names = {"hotkeys.open", "hotkeys.record", "hotkeys.save"};
+        int[] current = {options.hotkeyOpen, options.hotkeyRecord, options.hotkeySave};
+        hotkeyProblem = "";
+        for (int other = 0; other < current.length; other++) {
+            if (other != row && current[other] == combo) {
+                hotkeyProblem = strings.format("hotkeys.taken", strings.get(names[other]));
+                return;
+            }
+        }
         if (row == 0) {
             options.hotkeyOpen = combo;
         } else if (row == 1) {

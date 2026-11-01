@@ -16,7 +16,9 @@ import java.util.Locale;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -37,17 +39,33 @@ final class Recorder {
         int height;
         /** RGBA rows top to bottom, else NV12. */
         boolean rgba;
+        /** The NV12 bytes the sessions write: {@link #data} itself, or the writer's conversion of it. */
+        private byte[] ready;
+        private byte[] converted;
+        /** Sessions that still have to write this frame; the last one to finish returns it to the pool. */
+        private final AtomicInteger users = new AtomicInteger();
         private final ArrayBlockingQueue<Frame> home;
 
         private Frame(int bytes, ArrayBlockingQueue<Frame> home) {
             this.data = new byte[bytes];
             this.home = home;
         }
+
+        private void release() {
+            if (users.decrementAndGet() == 0) {
+                home.offer(this);
+            }
+        }
     }
 
     private enum State { WAITING, STARTING, RUNNING, STOPPING, ENDED }
 
     private static final int POOL = 3;
+    /** How long a stop waits for ffmpeg to finish the file once its input has ended. */
+    private static final int FINISH_SECONDS = 15;
+    /** How long a stop waits for a frame write that does not return before it kills ffmpeg. */
+    private static final int STUCK_WRITE_SECONDS = 2;
+    private static final String COLOR_TAGS = "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv";
     private static final String[] AUDIO_NAMES = {"Game", "Desktop", "Microphone"};
 
     private final Options options;
@@ -66,10 +84,12 @@ final class Recorder {
     private String bufferSignature = "";
     private long signatureChangedAt;
     private boolean bufferWasWanted;
-    /** The last file saved, for the GIF button. */
+    /** The last file saved, for the WebP button. */
     private volatile Path lastClip;
     private volatile boolean busy;
     private volatile boolean broken;
+    /** The JVM is exiting: nothing may start (or restart) after {@link #shutdown}. */
+    private volatile boolean shuttingDown;
 
     /** The size every session encodes at; set when the first one starts, 0 with none. */
     private volatile int width;
@@ -81,8 +101,6 @@ final class Recorder {
     private int poolBytes;
     private final ArrayBlockingQueue<Frame> queue = new ArrayBlockingQueue<>(POOL);
     private Thread writer;
-    /** The writer's own NV12 scratch for RGBA frames. */
-    private byte[] converted;
 
     Recorder(Options options, Ffmpeg ffmpeg, ScheduledExecutorService io, Executor render,
             BiConsumer<String, String> notify, Consumer<Throwable> onError) {
@@ -157,7 +175,7 @@ final class Recorder {
             }
             return;
         }
-        if (!ready()) {
+        if (shuttingDown || !ready()) {
             return;
         }
         recording = new Session(false);
@@ -194,22 +212,26 @@ final class Recorder {
         });
     }
 
-    /** Makes a GIF from the end of the last saved clip. */
-    void makeGif() {
+    /** Makes an animated WebP from the end of the last saved clip. */
+    void makeWebp() {
         Path clip = lastClip;
         if (clip == null) {
-            notify.accept(strings.get("gif.title"), strings.get("gif.noClip"));
+            notify.accept(strings.get("webp.title"), strings.get("webp.noClip"));
             return;
         }
         if (busy || !ready()) {
             return;
         }
+        if (!ffmpeg.hasWebp()) {
+            notify.accept(strings.get("webp.title"), strings.get("webp.missing"));
+            return;
+        }
         busy = true;
-        notify.accept(strings.get("gif.title"), strings.get("gif.making"));
+        notify.accept(strings.get("webp.title"), strings.get("webp.making"));
         io.execute(() -> {
             try {
-                Path file = replay.gif(clip);
-                notify.accept(strings.get("gif.saved"), file.getFileName() + "\n" + file.getParent());
+                Path file = replay.webp(clip);
+                notify.accept(strings.get("webp.saved"), file.getFileName() + "\n" + file.getParent());
             } catch (IOException e) {
                 notify.accept(strings.get("rec.failed"), e.getMessage());
                 onError.accept(e);
@@ -238,6 +260,9 @@ final class Recorder {
 
     /** Called every frame on the render thread: starts and stops the replay buffer, forgets finished sessions. */
     void tick() {
+        if (shuttingDown) {
+            return;
+        }
         Session session = recording;
         if (session != null && session.state == State.ENDED) {
             recording = null;
@@ -288,7 +313,7 @@ final class Recorder {
     boolean due(int frameWidth, int frameHeight) {
         Session r = recording;
         Session b = buffer;
-        if (broken || r == null && b == null || frameWidth < 2 || frameHeight < 2) {
+        if (broken || shuttingDown || r == null && b == null || frameWidth < 2 || frameHeight < 2) {
             return false;
         }
         int fps = 0;
@@ -375,27 +400,42 @@ final class Recorder {
         }
     }
 
+    /**
+     * Converts the frame once and hands it to every running session; each session has a thread of its
+     * own for the pipe, so one stuck ffmpeg does not hold back the other.
+     */
     private void write() {
         try {
             for (;;) {
                 Frame frame = queue.take();
-                try {
-                    byte[] nv12 = frame.data;
-                    if (frame.rgba) {
-                        int size = frame.width * frame.height * 3 / 2;
-                        if (converted == null || converted.length != size) {
-                            converted = new byte[size];
-                        }
-                        toNv12(frame.data, frame.width, frame.height, converted);
-                        nv12 = converted;
-                    }
-                    for (Session session : new Session[] {recording, buffer}) {
-                        if (session != null) {
-                            session.write(nv12, frame.width, frame.height);
+                Session first = null;
+                Session second = null;
+                for (Session session : new Session[] {recording, buffer}) {
+                    if (session != null && session.accepts(frame.width, frame.height)) {
+                        if (first == null) {
+                            first = session;
+                        } else {
+                            second = session;
                         }
                     }
-                } finally {
+                }
+                if (first == null) {
                     frame.home.offer(frame);
+                    continue;
+                }
+                frame.ready = frame.data;
+                if (frame.rgba) {
+                    int size = frame.width * frame.height * 3 / 2;
+                    if (frame.converted == null || frame.converted.length != size) {
+                        frame.converted = new byte[size];
+                    }
+                    toNv12(frame.data, frame.width, frame.height, frame.converted);
+                    frame.ready = frame.converted;
+                }
+                frame.users.set(second == null ? 1 : 2);
+                first.offer(frame);
+                if (second != null) {
+                    second.offer(frame);
                 }
             }
         } catch (InterruptedException e) {
@@ -437,9 +477,17 @@ final class Recorder {
 
     /** Stops everything and waits for the files to be finished; the JVM is exiting. */
     void shutdown() {
-        for (Session session : new Session[] {recording, buffer}) {
+        shuttingDown = true;
+        Session[] sessions = {recording, buffer};
+        for (Session session : sessions) {
             if (session != null) {
                 session.finish(false);
+            }
+        }
+        // A launch still under way sees the cancellation, closes what it made and ends.
+        for (Session session : sessions) {
+            if (session != null) {
+                session.awaitLaunch();
             }
         }
     }
@@ -467,8 +515,18 @@ final class Recorder {
         private final List<AudioCapture.Feed> feeds = new ArrayList<>();
         private final ArrayDeque<String> lines = new ArrayDeque<>();
         private Thread errors;
+        /** Guards the state and the fields above; never held during pipe or process I/O. */
         private final Object lock = new Object();
         private boolean failedAlready;
+        /** Set when the session is stopped before {@link #launch} published it; launch then undoes itself. */
+        private volatile boolean cancelled;
+        private final CountDownLatch launchDone = new CountDownLatch(1);
+        /** Frames for this session's own thread, which does the blocking pipe writes. */
+        private final ArrayBlockingQueue<Frame> pending = new ArrayBlockingQueue<>(1);
+        private Thread feeder;
+        private volatile boolean feeding;
+        /** Whether the audio helpers were told when the first frame went out. */
+        private boolean aligned;
 
         Session(boolean isBuffer) {
             this.isBuffer = isBuffer;
@@ -478,24 +536,62 @@ final class Recorder {
         /** Starts the audio helpers, then ffmpeg. Runs on the io thread. */
         void launch() {
             try {
+                if (cancelled) {
+                    abandon();
+                    return;
+                }
                 List<String> audioNames = startAudio();
+                if (cancelled) {
+                    abandon();
+                    return;
+                }
                 List<String> command = command(audioNames);
                 Process started = new ProcessBuilder(command).start();
+                boolean publish;
                 synchronized (lock) {
                     process = started;
-                    stdin = started.getOutputStream();
-                    errors = new Thread(() -> readErrors(started), "k0t1k-overlay-ffmpeg");
-                    errors.setDaemon(true);
-                    errors.start();
-                    startedAt = System.currentTimeMillis();
-                    state = State.RUNNING;
+                    publish = !cancelled;
+                    if (publish) {
+                        stdin = started.getOutputStream();
+                        errors = new Thread(() -> readErrors(started), "k0t1k-overlay-ffmpeg");
+                        errors.setDaemon(true);
+                        errors.start();
+                        feeding = true;
+                        feeder = new Thread(this::feed, "k0t1k-overlay-writer-" + (isBuffer ? "buffer" : "recording"));
+                        feeder.setDaemon(true);
+                        feeder.start();
+                        startedAt = System.currentTimeMillis();
+                        state = State.RUNNING;
+                    }
                 }
-                if (!isBuffer) {
+                if (!publish) {
+                    abandon();
+                } else if (!isBuffer) {
                     notify.accept(strings.get("rec.title"), strings.get("rec.started"));
                 }
             } catch (IOException | RuntimeException e) {
                 onError.accept(e);
                 fail(String.valueOf(e.getMessage() != null ? e.getMessage() : e));
+            } finally {
+                launchDone.countDown();
+            }
+        }
+
+        /** Undoes a launch that was stopped before it finished: closes the helpers and ffmpeg, removes what was made. */
+        private void abandon() {
+            if (process != null) {
+                process.destroyForcibly();
+            }
+            teardown();
+            state = State.ENDED;
+        }
+
+        /** Waits briefly for a launch under way to notice that it was cancelled; the JVM is exiting. */
+        void awaitLaunch() {
+            try {
+                launchDone.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
         }
 
@@ -565,11 +661,9 @@ final class Recorder {
                     c.addAll(Arrays.asList("-metadata:s:a:" + i, "title=" + title));
                 }
             }
-            if (vaapi) {
-                c.addAll(Arrays.asList("-vf", "format=nv12,hwupload"));
-            }
-            c.addAll(Arrays.asList("-fps_mode", "cfr", "-r", String.valueOf(fps), "-g", String.valueOf(fps * 2),
-                    "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"));
+            // The raw input carries no colour tags; setparams (first, before any upload) makes the encoder write them.
+            c.addAll(Arrays.asList("-vf", COLOR_TAGS + (vaapi ? ",format=nv12,hwupload" : "")));
+            c.addAll(Arrays.asList("-fps_mode", "cfr", "-r", String.valueOf(fps), "-g", String.valueOf(fps * 2)));
             c.addAll(Ffmpeg.encoderArgs(encoder, options.quality, options.bitrate));
             if (!feeds.isEmpty()) {
                 c.addAll(Arrays.asList("-c:a", "aac", "-b:a", "160k"));
@@ -582,7 +676,7 @@ final class Recorder {
             } else {
                 Path folder = options.recordingsFolder();
                 Files.createDirectories(folder);
-                file = folder.resolve(LocalDateTime.now().format(Replay.NAME) + "." + Ffmpeg.extension(options.container));
+                file = Replay.reserve(folder, LocalDateTime.now().format(Replay.NAME), Ffmpeg.extension(options.container));
                 c.addAll(Ffmpeg.containerArgs(options.container, encoder));
                 c.add(file.toString());
             }
@@ -653,24 +747,64 @@ final class Recorder {
             }
         }
 
-        /** Writes one NV12 frame; runs on the writer thread. A broken pipe means ffmpeg died. */
-        void write(byte[] nv12, int frameWidth, int frameHeight) {
-            if (frameWidth != width || frameHeight != height) {
+        /** Whether a frame of this size is wanted now; called on the dispatching writer thread. */
+        boolean accepts(int frameWidth, int frameHeight) {
+            return state == State.RUNNING && frameWidth == width && frameHeight == height;
+        }
+
+        /** Queues a frame for the session's thread; a frame it cannot take is dropped and returned. */
+        void offer(Frame frame) {
+            if (state != State.RUNNING || !pending.offer(frame)) {
+                dropped++;
+                frame.release();
                 return;
             }
-            synchronized (lock) {
-                if (state != State.RUNNING) {
-                    return;
-                }
-                try {
-                    stdin.write(nv12, 0, frameWidth * frameHeight * 3 / 2);
-                    stdin.flush();
-                    return;
-                } catch (IOException e) {
-                    state = State.STOPPING;
-                }
+            if (state != State.RUNNING) {
+                drainPending(); // stopped meanwhile: do not keep the buffer
             }
-            io.execute(() -> fail(lastError()));
+        }
+
+        private void drainPending() {
+            for (Frame frame; (frame = pending.poll()) != null; ) {
+                frame.release();
+            }
+        }
+
+        /** The session's own thread: writes frames to ffmpeg. A broken pipe means ffmpeg died. */
+        private void feed() {
+            try {
+                while (feeding) {
+                    Frame frame = pending.take();
+                    try {
+                        if (!aligned) {
+                            // The first frame is the start of the video; the audio helpers cut what came before.
+                            aligned = true;
+                            long start = System.nanoTime();
+                            for (AudioCapture.Feed feed : feeds) {
+                                feed.alignAt(start);
+                            }
+                        }
+                        stdin.write(frame.ready, 0, frame.width * frame.height * 3 / 2);
+                        stdin.flush();
+                    } catch (IOException e) {
+                        if (feeding) {
+                            synchronized (lock) {
+                                if (state == State.RUNNING) {
+                                    state = State.STOPPING;
+                                }
+                            }
+                            io.execute(() -> fail(lastError()));
+                        }
+                        return;
+                    } finally {
+                        frame.release();
+                    }
+                }
+            } catch (InterruptedException e) {
+                // Stopping.
+            } finally {
+                drainPending();
+            }
         }
 
         /** Ends the session after an error: stops the process, tells the player why. */
@@ -697,7 +831,14 @@ final class Recorder {
                     return;
                 }
                 if (state != State.RUNNING) {
-                    state = State.ENDED; // never got going
+                    // Never got going: a launch under way sees this, undoes itself and ends the session.
+                    cancelled = true;
+                    if (state == State.WAITING) {
+                        state = State.ENDED;
+                        launchDone.countDown();
+                    } else {
+                        state = State.STOPPING;
+                    }
                     return;
                 }
                 state = State.STOPPING;
@@ -717,9 +858,15 @@ final class Recorder {
             try {
                 if (options.remux && "mkv".equals(options.container)) {
                     notify.accept(strings.get("rec.title"), strings.get("rec.remuxing"));
-                    Path mp4 = file.resolveSibling(file.getFileName().toString().replaceFirst("\\.mkv$", ".mp4"));
-                    Ffmpeg.run(Arrays.asList(ffmpeg.path(), "-hide_banner", "-loglevel", "error", "-y", "-i", file.toString(),
-                            "-map", "0", "-c", "copy", "-movflags", "+faststart", mp4.toString()));
+                    String name = file.getFileName().toString();
+                    Path mp4 = Replay.reserve(file.getParent(), name.substring(0, name.length() - ".mkv".length()), "mp4");
+                    try {
+                        Ffmpeg.run(Arrays.asList(ffmpeg.path(), "-hide_banner", "-loglevel", "error", "-y", "-i", file.toString(),
+                                "-map", "0", "-c", "copy", "-movflags", "+faststart", mp4.toString()));
+                    } catch (IOException e) {
+                        Files.deleteIfExists(mp4);
+                        throw e;
+                    }
                     Files.delete(file);
                     result = mp4;
                 }
@@ -734,37 +881,76 @@ final class Recorder {
             }
         }
 
-        /** Stops audio first (ffmpeg ends when all its inputs do), then video. True when ffmpeg exited cleanly. */
+        /**
+         * Stops audio first (ffmpeg ends when all its inputs do), then video. True when ffmpeg exited cleanly.
+         * Nothing here waits without a limit: a frame write that does not return (ffmpeg stopped reading)
+         * is ended by killing the process, which breaks the pipe.
+         */
         private boolean teardown() {
             for (AudioCapture.Feed feed : feeds) {
                 feed.close();
             }
+            Process started;
+            Thread writing;
+            OutputStream pipe;
             synchronized (lock) {
+                started = process;
+                writing = feeder;
+                pipe = stdin;
+            }
+            feeding = false;
+            boolean stuck = false;
+            if (writing != null) {
+                writing.interrupt();
+                stuck = !join(writing, STUCK_WRITE_SECONDS);
+                if (stuck && started != null) {
+                    started.destroyForcibly();
+                    join(writing, STUCK_WRITE_SECONDS);
+                }
+            }
+            drainPending();
+            boolean ok = false;
+            if (started != null) {
                 try {
-                    if (stdin != null) {
-                        stdin.close();
+                    // Closing the pipe while the writer was still inside it would block on its monitor.
+                    if (pipe != null && (writing == null || !writing.isAlive())) {
+                        pipe.close();
                     }
                 } catch (IOException e) {
                     // ffmpeg is already gone.
                 }
-            }
-            boolean ok = false;
-            if (process != null) {
                 try {
-                    if (process.waitFor(30, TimeUnit.SECONDS)) {
-                        ok = process.exitValue() == 0;
+                    if (started.waitFor(FINISH_SECONDS, TimeUnit.SECONDS)) {
+                        ok = !stuck && started.exitValue() == 0;
                     } else {
-                        process.destroyForcibly();
+                        started.destroyForcibly();
                     }
                 } catch (InterruptedException e) {
-                    process.destroyForcibly();
+                    started.destroyForcibly();
                     Thread.currentThread().interrupt();
                 }
             }
             if (isBuffer) {
                 replay.end();
+            } else if (file != null) {
+                try {
+                    if (Files.size(file) == 0) {
+                        Files.delete(file); // the reserved name of a recording that never wrote anything
+                    }
+                } catch (IOException e) {
+                    // Not there, or still in use: leave it.
+                }
             }
             return ok;
+        }
+
+        private boolean join(Thread thread, int seconds) {
+            try {
+                thread.join(seconds * 1000L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return !thread.isAlive();
         }
     }
 

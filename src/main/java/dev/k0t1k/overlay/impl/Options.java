@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Properties;
@@ -97,9 +98,12 @@ final class Options {
     int volumeGame = 100;
     int volumeRest = 100;
     int volumeMic = 100;
-    int gifFps = 20;
-    int gifWidth = 640;
-    int gifSeconds = 10;
+    /** The animated WebP made from the last clip: frame rate, width in pixels (0 keeps the clip's), quality, seconds. */
+    int webpFps = 30;
+    int webpWidth = 960;
+    int webpQuality = 80;
+    boolean webpLossless;
+    int webpSeconds = 10;
     /** Key combinations, see {@link Hotkeys}. */
     int hotkeyOpen = Hotkeys.OPEN;
     int hotkeyRecord = Hotkeys.RECORD;
@@ -313,9 +317,11 @@ final class Options {
         volumeGame = number(saved, "volumeGame", 100, 0, 200);
         volumeRest = number(saved, "volumeRest", 100, 0, 200);
         volumeMic = number(saved, "volumeMic", 100, 0, 200);
-        gifFps = number(saved, "gifFps", 20, 1, 60);
-        gifWidth = number(saved, "gifWidth", 640, 120, 1920);
-        gifSeconds = number(saved, "gifSeconds", 10, 1, 60);
+        webpFps = number(saved, "webpFps", 30, 1, 60);
+        webpWidth = number(saved, "webpWidth", 960, 0, 7680);
+        webpQuality = number(saved, "webpQuality", 80, 50, 100);
+        webpLossless = Boolean.parseBoolean(saved.getProperty("webpLossless", "false"));
+        webpSeconds = number(saved, "webpSeconds", 10, 1, 60);
         hotkeyOpen = number(saved, "hotkeyOpen", Hotkeys.OPEN, Integer.MIN_VALUE, Integer.MAX_VALUE);
         hotkeyRecord = number(saved, "hotkeyRecord", Hotkeys.RECORD, Integer.MIN_VALUE, Integer.MAX_VALUE);
         hotkeySave = number(saved, "hotkeySave", Hotkeys.SAVE, Integer.MIN_VALUE, Integer.MAX_VALUE);
@@ -341,9 +347,11 @@ final class Options {
         out.setProperty("volumeGame", Integer.toString(volumeGame));
         out.setProperty("volumeRest", Integer.toString(volumeRest));
         out.setProperty("volumeMic", Integer.toString(volumeMic));
-        out.setProperty("gifFps", Integer.toString(gifFps));
-        out.setProperty("gifWidth", Integer.toString(gifWidth));
-        out.setProperty("gifSeconds", Integer.toString(gifSeconds));
+        out.setProperty("webpFps", Integer.toString(webpFps));
+        out.setProperty("webpWidth", Integer.toString(webpWidth));
+        out.setProperty("webpQuality", Integer.toString(webpQuality));
+        out.setProperty("webpLossless", Boolean.toString(webpLossless));
+        out.setProperty("webpSeconds", Integer.toString(webpSeconds));
         out.setProperty("hotkeyOpen", Integer.toString(hotkeyOpen));
         out.setProperty("hotkeyRecord", Integer.toString(hotkeyRecord));
         out.setProperty("hotkeySave", Integer.toString(hotkeySave));
@@ -367,8 +375,22 @@ final class Options {
         }
     }
 
-    /** Where recordings are written. */
+    /** Whether {@code text} is empty (the default folder) or a path the system accepts. */
+    static boolean validFolder(String text) {
+        try {
+            Paths.get(text.trim());
+            return true;
+        } catch (InvalidPathException e) {
+            return false;
+        }
+    }
+
+    /** Where recordings are written; the default folder when the chosen one is not a valid path. */
     Path recordingsFolder() {
-        return outputDir.trim().isEmpty() ? gameDir.resolve("recordings") : Paths.get(outputDir.trim());
+        String chosen = outputDir.trim();
+        if (!chosen.isEmpty() && validFolder(chosen)) {
+            return Paths.get(chosen);
+        }
+        return gameDir.resolve("recordings");
     }
 }

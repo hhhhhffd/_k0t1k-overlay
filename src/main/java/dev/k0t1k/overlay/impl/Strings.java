@@ -264,11 +264,13 @@ final class Strings {
         add("rec.keys", "Record: %s · Save replay: %s", "Запись: %s · Сохранить повтор: %s");
         add("rec.dropped", "dropped frames: %d", "потеряно кадров: %d");
         add("rec.bufferStopped", "The replay buffer stopped: %s", "Буфер повтора остановился: %s");
-        add("gif.title", "GIF", "GIF");
-        add("gif.make", "GIF of the last clip", "GIF из последнего клипа");
-        add("gif.noClip", "Record or save a replay first", "Сначала запиши видео или сохрани повтор");
-        add("gif.making", "Making the GIF…", "Делаю GIF…");
-        add("gif.saved", "GIF saved", "GIF сохранён");
+        add("webp.title", "WebP", "WebP");
+        add("webp.make", "WebP of the last clip", "WebP из последнего клипа");
+        add("webp.noClip", "Record or save a replay first", "Сначала запиши видео или сохрани повтор");
+        add("webp.making", "Making the WebP…", "Делаю WebP…");
+        add("webp.saved", "WebP saved", "WebP сохранён");
+        add("webp.missing", "This ffmpeg has no WebP encoder (libwebp); use the downloaded build or another ffmpeg",
+                "В этом ffmpeg нет кодировщика WebP (libwebp); возьми скачанную сборку или другой ffmpeg");
         add("rec.ffmpeg", "ffmpeg", "ffmpeg");
         add("rec.auto", "Auto", "Авто");
         add("rec.customPath", "Own file", "Свой файл");
@@ -310,8 +312,14 @@ final class Strings {
         add("rec.audioUnavailable", "Not available on this system", "Недоступно в этой системе");
         add("rec.audioHint", "Each source gets its own track after the mix. On Linux the desktop source includes the game.",
                 "Каждый источник пишется отдельной дорожкой после общей. В Linux «рабочий стол» включает и игру.");
-        add("rec.gif", "GIF from the last clip", "GIF из последнего клипа");
-        add("rec.gifHint", "Frame rate, width and how many seconds from the end of the clip", "Частота кадров, ширина и сколько секунд с конца клипа");
+        add("rec.webp", "Animated WebP from the last clip", "Анимированный WebP из последнего клипа");
+        add("rec.webpHint", "Frame rate, width and how many seconds from the end of the clip; lossless files are large",
+                "Частота кадров, ширина и сколько секунд с конца клипа; без потерь файлы большие");
+        add("rec.webpLossless", "Lossless", "Без потерь");
+        add("rec.webpQuality", "Quality %d", "Качество %d");
+        add("rec.folderInvalid", "This is not a valid folder path; the default folder is used",
+                "Это неверный путь к папке; используется папка по умолчанию");
+        add("hotkeys.taken", "%s already uses this combination", "Это сочетание уже занято: %s");
         add("hotkeys.title", "Hotkeys", "Горячие клавиши");
         add("hotkeys.open", "Open the overlay", "Открыть оверлей");
         add("hotkeys.record", "Start / stop recording", "Начать / остановить запись");
