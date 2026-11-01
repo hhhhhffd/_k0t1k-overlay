@@ -76,7 +76,12 @@ final class LegacyPlatform implements LegacyBackend {
         // A shared context (Forge's loading screen runs on its own) has none of our objects.
         if (renderer == null || renderer.caps != GLContext.getCapabilities()) {
             renderer = new LegacyGlRenderer();
-            overlay.setRendererName(GL11.glGetString(GL11.GL_RENDERER) + " · OpenGL " + GL11.glGetString(GL11.GL_VERSION));
+            overlay.hardware().bypass = true;
+            try {
+                overlay.setRendererName(GL11.glGetString(GL11.GL_RENDERER) + " · OpenGL " + GL11.glGetString(GL11.GL_VERSION));
+            } finally {
+                overlay.hardware().bypass = false;
+            }
             int[] dirty = overlay.batch().dirty;
             dirty[0] = dirty[1] = 0;
             dirty[2] = dirty[3] = Batch.ATLAS;

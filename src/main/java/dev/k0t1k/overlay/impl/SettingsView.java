@@ -7,17 +7,24 @@ package dev.k0t1k.overlay.impl;
  * it from {@link #draw} in the same order.
  */
 final class SettingsView {
-    private static final String[] SECTIONS = {"settings.interface", "settings.hud", "settings.cat", "settings.replay"};
+    private static final String[] SECTIONS = {"settings.interface", "settings.hud", "settings.cat", "settings.replay",
+        "settings.hardware"};
     private static final int INTERFACE = 0;
     private static final int HUD = 1;
     private static final int CAT = 2;
     private static final int REPLAY = 3;
+    private static final int HARDWARE = 4;
 
     private final Overlay overlay;
     private final Options options;
     private final Strings strings;
     /** The percent shown while the scale slider is dragged; the scale itself changes on release. */
     private int draggedScale;
+    private final TextEdit fakeCpu;
+    private final TextEdit fakeThreads;
+    private final TextEdit fakeGpu;
+    private final TextEdit fakeVendor;
+    private final TextEdit fakeMemory;
     private float scroll;
     /** The y of the top of the column, so a section can tell where it starts within it. */
     private float viewTop;
@@ -28,6 +35,11 @@ final class SettingsView {
         this.overlay = overlay;
         this.options = overlay.options();
         this.strings = options.strings;
+        fakeCpu = new TextEdit(options.fakeCpu);
+        fakeThreads = new TextEdit(Integer.toString(options.fakeThreads));
+        fakeGpu = new TextEdit(options.fakeGpu);
+        fakeVendor = new TextEdit(options.fakeVendor);
+        fakeMemory = new TextEdit(Integer.toString(options.fakeMemory));
     }
 
     void draw(Ui ui, float x, float y, float w, float h) {
@@ -43,6 +55,7 @@ final class SettingsView {
         cy = hudSection(ui, cx, cy, cw);
         cy = catSection(ui, cx, cy, cw);
         cy = replaySection(ui, cx, cy, cw);
+        cy = hardwareSection(ui, cx, cy, cw);
         ui.unclip();
         float content = cy + scroll - y;
 
@@ -156,5 +169,59 @@ final class SettingsView {
             fx += pw + 4;
         }
         return y + 48;
+    }
+
+    private float hardwareSection(Ui ui, float x, float y, float w) {
+        y = heading(ui, HARDWARE, x, y, w);
+        boolean on = ui.checkbox(x, y + 2, strings.get("hw.toggle"), options.fakeHardware);
+        if (on != options.fakeHardware) {
+            options.fakeHardware = on;
+            changed();
+        }
+        y += 40;
+        float labelW = 150;
+        float fw = Math.min(320, w - labelW);
+        if (hardwareRow(ui, x, y, labelW, fw, "hw.cpu", fakeCpu)) {
+            options.fakeCpu = fakeCpu.value();
+            changed();
+        }
+        y += 40;
+        if (hardwareRow(ui, x, y, labelW, fw, "hw.threads", fakeThreads)) {
+            options.fakeThreads = number(fakeThreads, options.fakeThreads, 1024);
+            changed();
+        }
+        y += 40;
+        if (hardwareRow(ui, x, y, labelW, fw, "hw.gpu", fakeGpu)) {
+            options.fakeGpu = fakeGpu.value();
+            changed();
+        }
+        y += 40;
+        if (hardwareRow(ui, x, y, labelW, fw, "hw.vendor", fakeVendor)) {
+            options.fakeVendor = fakeVendor.value();
+            changed();
+        }
+        y += 40;
+        if (hardwareRow(ui, x, y, labelW, fw, "hw.memory", fakeMemory)) {
+            options.fakeMemory = number(fakeMemory, options.fakeMemory, 16777216);
+            changed();
+        }
+        y += 40;
+        ui.textFit(ui.regular, 12, x, y, w, Ui.FAINT, strings.get("hw.hint"));
+        return y + 40;
+    }
+
+    private boolean hardwareRow(Ui ui, float x, float y, float labelW, float fieldW, String label, TextEdit edit) {
+        ui.text(ui.regular, 13, x, y + 8, Ui.MUTED, strings.get(label));
+        return ui.field(edit, x + labelW, y, fieldW, 30, false, "");
+    }
+
+    /** The field's number when it is a whole number from 1 to {@code max}; otherwise the old value. */
+    private static int number(TextEdit edit, int old, int max) {
+        try {
+            int value = Integer.parseInt(edit.value().trim());
+            return value >= 1 && value <= max ? value : old;
+        } catch (NumberFormatException e) {
+            return old;
+        }
     }
 }
