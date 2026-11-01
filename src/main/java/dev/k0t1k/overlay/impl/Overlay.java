@@ -170,7 +170,7 @@ public final class Overlay implements Function<Object[], Object> {
         };
         replay = new Replay(options.gameDir, this::report);
         browser = new Browser(options.dataDir, io, options.lang);
-        browserView = new BrowserView(browser, strings, this);
+        browserView = new BrowserView(browser, strings, this, io);
         crashGuard = new CrashGuard(options.dataDir);
         crashGuard.install();
         chat.onNew = this::onChat;
@@ -412,6 +412,11 @@ public final class Overlay implements Function<Object[], Object> {
         return options;
     }
 
+    /** Deletes the browser's cookies (logins); false when the browser is not running. */
+    boolean clearBrowserCookies() {
+        return browser.clearCookies();
+    }
+
     void saveSettings() {
         io.execute(options.saveTask());
     }
@@ -598,13 +603,29 @@ public final class Overlay implements Function<Object[], Object> {
 
     // ---- input, from the wrapped GLFW callbacks; each returns true when the game must not see it ----
 
+    /**
+     * GLFW on X11 reports the modifiers from before the event, so a modifier key's own press (or
+     * release) is missing from its {@code mods}; without this Ctrl+wheel would lag one key behind.
+     */
+    private static int withModifierKey(int key, int action, int mods) {
+        int bit;
+        switch (key) {
+            case 340: case 344: bit = Keys.MOD_SHIFT; break;
+            case 341: case 345: bit = Keys.MOD_CONTROL; break;
+            case 342: case 346: bit = Keys.MOD_ALT; break;
+            case 343: case 347: bit = Keys.MOD_SUPER; break;
+            default: return mods;
+        }
+        return action == Keys.RELEASE ? mods & ~bit : mods | bit;
+    }
+
     boolean key(int key, int action, int mods) {
         if (broken) {
             return false;
         }
         ensureUi();
         input();
-        ui.mods = mods;
+        ui.mods = withModifierKey(key, action, mods);
         boolean press = action != Keys.RELEASE;
         if (!press && !gameKeys.remove(key) && open) {
             // The game never saw this press (the overlay took it), so it must not see the release.
@@ -635,7 +656,7 @@ public final class Overlay implements Function<Object[], Object> {
             // and the key does not stay down.
             return false;
         }
-        if (key == Keys.ESCAPE) {
+        if (key == Keys.ESCAPE && !(tab == 1 && browserView.wantsEscape())) {
             setOpen(false);
         } else {
             ui.onKey(key, mods);

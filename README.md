@@ -47,7 +47,7 @@ Press **Shift+Tab** in game to open it, and **Shift+Tab** or **Esc** to close it
 | **Mods** | The instance's mods with a search and what each one does (from the mod's metadata), with links to Modrinth and the mod's homepage. |
 | **Profile** | Lifetime stats (play time, sessions, deaths, advancements, screenshots, crashes) and the launcher's achievements on top of them. |
 | **Performance** | FPS, frame time, 1% low, a frame time graph, heap, GC and the game's CPU load, plus an optional HUD in a corner of the screen (turned on in Settings). |
-| **Browser** | A real Chromium (JCEF, off-screen rendering) in its own tab: back, forward, reload, an address bar that also searches, quick links (Minecraft Wiki, Modrinth, CurseForge, YouTube). |
+| **Browser** | A real Chromium (JCEF, off-screen rendering) with tabs (restored on the next start), an address bar that also searches (Google, Yandex, DuckDuckGo or Bing), editable bookmarks, a page context menu, page zoom and fullscreen video. |
 | **Replay** | The last 30 seconds kept in memory; **Shift+F2** or the button in Tools saves them as a GIF or a video. |
 | **Music** | What the system plays (Spotify, a browser tab, any player) with previous, play/pause and next, and a toast when a new track starts. |
 | **Crash window** | After a crash, shows the reason and the report and uploads them to mclo.gs only when the player clicks "Send to support". |
@@ -61,7 +61,7 @@ button is hidden and deaths are not counted. Advancements are read from the chat
 <details>
 <summary>Feature details: browser, replay, music, crash window</summary>
 
-- **Browser.** Mouse, wheel and keyboard go to the page; logins and cookies persist in
+- **Browser.** Mouse, wheel and keyboard go to the page (Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+L, F5, Alt+arrows, Ctrl+wheel zoom; bookmarks and the open tabs are kept in `<dataDir>/browser`, settings are under Settings → Browser); logins and cookies persist in
   `<dataDir>/browser/profile`. Chromium is about 170 MB, so it is not in the agent: the first time the
   player clicks "Download the browser", `Browser` fetches `me.friwi:jcef-api` and the platform's
   `jcef-natives-*` (jcefmaven's builds) from Maven Central, checks each against the SHA-256 pinned in

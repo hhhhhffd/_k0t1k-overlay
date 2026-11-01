@@ -48,6 +48,11 @@ final class Options {
     String replayFormat = "video";
     /** The interface scale in percent, {@link #MIN_SCALE} to {@link #MAX_SCALE}, or 0 for automatic. */
     int uiScale;
+    /** The browser's home page and new-tab page. */
+    String browserHome = "https://www.google.com/";
+    /** The search engine for the address bar: a key of {@code BrowserView.ENGINES}. */
+    String browserSearch = "google";
+    boolean bookmarksBar = true;
     /** The launcher's interface zoom in percent, or 0 when it is on automatic. */
     final int launcherScale;
     /** Whether the overlay shows its own crash window; a launcher with its own can turn it off. */
@@ -124,6 +129,9 @@ final class Options {
         replay = Boolean.parseBoolean(saved.getProperty("replay", "true"));
         replayFormat = "gif".equals(saved.getProperty("replayFormat")) ? "gif" : "video";
         uiScale = parseScale(saved.getProperty("uiScale", "0"), MAX_SCALE);
+        browserHome = saved.getProperty("browserHome", browserHome);
+        browserSearch = saved.getProperty("browserSearch", browserSearch);
+        bookmarksBar = Boolean.parseBoolean(saved.getProperty("bookmarksBar", "true"));
         try {
             hudCorner = Math.max(0, Math.min(3, Integer.parseInt(saved.getProperty("hudCorner", "0"))));
         } catch (NumberFormatException e) {
@@ -140,6 +148,9 @@ final class Options {
         snapshot.setProperty("replay", Boolean.toString(replay));
         snapshot.setProperty("replayFormat", replayFormat);
         snapshot.setProperty("uiScale", Integer.toString(uiScale));
+        snapshot.setProperty("browserHome", browserHome);
+        snapshot.setProperty("browserSearch", browserSearch);
+        snapshot.setProperty("bookmarksBar", Boolean.toString(bookmarksBar));
         return () -> {
             try {
                 Files.createDirectories(dataDir);

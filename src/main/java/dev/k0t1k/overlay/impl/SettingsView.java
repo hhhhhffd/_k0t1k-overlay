@@ -7,11 +7,12 @@ package dev.k0t1k.overlay.impl;
  * it from {@link #draw} in the same order.
  */
 final class SettingsView {
-    private static final String[] SECTIONS = {"settings.interface", "settings.hud", "settings.cat", "settings.replay"};
+    private static final String[] SECTIONS = {"settings.interface", "settings.hud", "settings.cat", "settings.replay", "settings.browser"};
     private static final int INTERFACE = 0;
     private static final int HUD = 1;
     private static final int CAT = 2;
     private static final int REPLAY = 3;
+    private static final int BROWSER = 4;
 
     private final Overlay overlay;
     private final Options options;
@@ -19,6 +20,9 @@ final class SettingsView {
     /** The percent shown while the scale slider is dragged; the scale itself changes on release. */
     private int draggedScale;
     private float scroll;
+    private final TextEdit homeEdit = new TextEdit();
+    private long clearedAt;
+    private boolean clearFailed;
     /** The y of the top of the column, so a section can tell where it starts within it. */
     private float viewTop;
     /** Where each section starts, as an offset from the top of the column; set while drawing. */
@@ -28,6 +32,7 @@ final class SettingsView {
         this.overlay = overlay;
         this.options = overlay.options();
         this.strings = options.strings;
+        homeEdit.set(options.browserHome);
     }
 
     void draw(Ui ui, float x, float y, float w, float h) {
@@ -43,6 +48,7 @@ final class SettingsView {
         cy = hudSection(ui, cx, cy, cw);
         cy = catSection(ui, cx, cy, cw);
         cy = replaySection(ui, cx, cy, cw);
+        cy = browserSection(ui, cx, cy, cw);
         ui.unclip();
         float content = cy + scroll - y;
 
@@ -154,6 +160,45 @@ final class SettingsView {
                 changed();
             }
             fx += pw + 4;
+        }
+        return y + 48;
+    }
+
+    private float browserSection(Ui ui, float x, float y, float w) {
+        y = heading(ui, BROWSER, x, y, w);
+        ui.text(ui.regular, 13, x, y + 4, Ui.MUTED, strings.get("settings.browserHome"));
+        y += 26;
+        if (ui.field(homeEdit, x, y, Math.min(420, w), 32, false, "https://www.google.com/")) {
+            options.browserHome = homeEdit.value();
+            changed();
+        }
+        y += 44;
+        ui.text(ui.regular, 13, x, y + 4, Ui.MUTED, strings.get("settings.browserSearch"));
+        float px = x + ui.measure(ui.regular, 13, strings.get("settings.browserSearch")) + 16;
+        for (String[] engine : BrowserView.ENGINES) {
+            float pw = ui.measure(ui.bold, 13, engine[1]) + 20;
+            if (ui.pill(px, y, pw, 26, engine[1], engine[0].equals(options.browserSearch))) {
+                options.browserSearch = engine[0];
+                changed();
+            }
+            px += pw + 4;
+        }
+        y += 40;
+        boolean bar = ui.checkbox(x, y, strings.get("settings.browserBar"), options.bookmarksBar);
+        if (bar != options.bookmarksBar) {
+            options.bookmarksBar = bar;
+            changed();
+        }
+        y += 32;
+        String clear = strings.get("settings.browserClear");
+        float bw = ui.buttonWidth(clear);
+        if (ui.button(x, y, bw, 32, clear, false)) {
+            clearFailed = !overlay.clearBrowserCookies();
+            clearedAt = System.currentTimeMillis();
+        }
+        if (clearedAt != 0 && System.currentTimeMillis() - clearedAt < 4000) {
+            ui.text(ui.regular, 13, x + bw + 12, y + 7, clearFailed ? Ui.DANGER : Ui.OK,
+                    strings.get(clearFailed ? "settings.browserStopped" : "settings.browserCleared"));
         }
         return y + 48;
     }
