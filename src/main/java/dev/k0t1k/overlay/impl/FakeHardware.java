@@ -70,6 +70,11 @@ final class FakeHardware {
         }
     }
 
+    /** Whether the game's debug screen is shown, as far as the F3 presses it saw tell. */
+    boolean f3Shown() {
+        return f3Shown;
+    }
+
     private static boolean debugCombo(int key) {
         // Approximation across Minecraft 1.8–1.21; other keys must still allow the F3 toggle.
         return key >= '1' && key <= '9' || key >= 'A' && key <= 'Z'

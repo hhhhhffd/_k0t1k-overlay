@@ -38,6 +38,8 @@ final class Batch {
     final ByteBuffer vertices = ByteBuffer.allocateDirect(MAX_QUADS * 4 * STRIDE).order(ByteOrder.nativeOrder());
     final List<Draw> draws = new ArrayList<>();
     int quads;
+    /** Multiplies the alpha of everything drawn, so an element can fade as a whole; 1 outside such an element. */
+    float alpha = 1;
     int width;
     int height;
     private final ArrayDeque<int[]> clips = new ArrayDeque<>();
@@ -64,6 +66,7 @@ final class Batch {
         draws.clear();
         clips.clear();
         quads = 0;
+        alpha = 1;
     }
 
     /** Finishes the frame: the vertex buffer is ready to read from position 0 to its limit. */
@@ -155,6 +158,13 @@ final class Batch {
                 Overlay.log("frame has more than " + MAX_QUADS + " quads; the rest is not drawn");
             }
             return;
+        }
+        if (alpha < 1) {
+            int faded = Math.round((argb >>> 24) * alpha);
+            if (faded == 0) {
+                return;
+            }
+            argb = faded << 24 | argb & 0xffffff;
         }
         int[] clip = clips.peek();
         Draw last = draws.isEmpty() ? null : draws.get(draws.size() - 1);

@@ -183,6 +183,14 @@ final class Strings {
         add("ach.timer1.d", "Let a timer run out", "Дождаться таймера");
         add("ach.nightOwl", "Night owl", "Сова");
         add("ach.nightOwl.d", "Play between 3 and 5 am", "Играть с 3 до 5 утра");
+        add("fade.opacity", "Opacity", "Непрозрачность");
+        add("fade.rules", "Auto-hide", "Автоскрытие");
+        add("fade.hover", "Mouse over it", "Курсор над ним");
+        add("fade.hoverFull", "hide fully, not to 10%", "скрывать полностью, не до 10%");
+        add("fade.menus", "In menus", "В меню");
+        add("fade.f3", "F3 open", "Открыт F3");
+        add("fade.list", "Player list (Tab)", "Список игроков (Tab)");
+        add("rec.indicator", "Recording indicator", "Индикатор записи");
         add("cat.toggle", "Cat reacts to events", "Кот реагирует на события");
         add("cat.death1", "Meow! One life down.", "Мяу! Минус жизнь.");
         add("cat.death2", "I saw nothing. Go get your stuff.", "Я ничего не видел. Беги за вещами.");

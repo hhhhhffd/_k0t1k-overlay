@@ -127,6 +127,11 @@ final class GlfwPlatform implements Platform {
     }
 
     @Override
+    public boolean gameCursorVisible() {
+        return glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_NORMAL;
+    }
+
+    @Override
     public void showCursor() {
         savedMode = glfwGetInputMode(window, GLFW_CURSOR);
         pendingMode = savedMode;

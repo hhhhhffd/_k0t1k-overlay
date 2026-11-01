@@ -322,6 +322,11 @@ final class LegacyPlatform implements LegacyBackend {
     }
 
     @Override
+    public boolean gameCursorVisible() {
+        return !Mouse.isGrabbed();
+    }
+
+    @Override
     public void showCursor() {
         ownCalls++;
         try {

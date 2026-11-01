@@ -78,6 +78,11 @@ final class Options {
     final int[] toastKindSeconds = new int[ToastKind.values().length];
     /** Whether the cat pops up to react to deaths, advancements, AFK and timers. */
     boolean cat = true;
+    /** Opacity and auto-hide rules of the elements drawn over the game while the overlay is closed. */
+    final AutoHide hudHide = new AutoHide(true, true);
+    final AutoHide toastHide = new AutoHide(true, false);
+    final AutoHide catHide = new AutoHide(false, false);
+    final AutoHide recHide = new AutoHide(false, false);
     // Recording and the replay buffer (OpenGL 3.2 and Vulkan), encoded by ffmpeg.
     /** "auto" (downloaded, else on PATH) or "custom" (the file in {@link #ffmpegPath}). */
     String ffmpegMode = "auto";
@@ -229,6 +234,10 @@ final class Options {
         }
         hud = Boolean.parseBoolean(saved.getProperty("hud", "false"));
         cat = Boolean.parseBoolean(saved.getProperty("cat", "true"));
+        hudHide.load(saved, "hudAuto.");
+        toastHide.load(saved, "toastAuto.");
+        catHide.load(saved, "catAuto.");
+        recHide.load(saved, "recAuto.");
         loadRecording(saved);
         uiScale = parseScale(saved.getProperty("uiScale", "0"), MAX_SCALE);
         hudSize = intSetting(saved, "hudSize", 100, MIN_HUD_SIZE, MAX_HUD_SIZE);
@@ -274,7 +283,7 @@ final class Options {
         fakeMemory = intSetting(saved, "fakeMemory", fakeMemory, 1, 16777216);
     }
 
-    private static int intSetting(Properties saved, String key, int fallback, int min, int max) {
+    static int intSetting(Properties saved, String key, int fallback, int min, int max) {
         try {
             return Math.max(min, Math.min(max, Integer.parseInt(saved.getProperty(key, Integer.toString(fallback)))));
         } catch (NumberFormatException e) {
@@ -313,6 +322,10 @@ final class Options {
             snapshot.setProperty("toastSeconds." + kind.id, Integer.toString(toastKindSeconds[kind.ordinal()]));
         }
         snapshot.setProperty("cat", Boolean.toString(cat));
+        hudHide.save(snapshot, "hudAuto.");
+        toastHide.save(snapshot, "toastAuto.");
+        catHide.save(snapshot, "catAuto.");
+        recHide.save(snapshot, "recAuto.");
         saveRecording(snapshot);
         snapshot.setProperty("uiScale", Integer.toString(uiScale));
         snapshot.setProperty("browserHome", browserHome);

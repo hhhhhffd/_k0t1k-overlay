@@ -142,6 +142,15 @@ public final class Overlay implements Function<Object[], Object> {
 
     private final List<Toast> toasts = new ArrayList<>();
     private long lastToastTick;
+    /** The pointer in window coordinates, as of its last move; negative until it moved. */
+    private double pointerX = -1;
+    private double pointerY = -1;
+    /** The game's state this frame, which the auto-hide rules of the elements over the game look at. */
+    private boolean gameMenu;
+    private boolean gameF3;
+    private boolean gameList;
+    /** Whether the pointer was over a toast last frame; the toasts fade together. */
+    private boolean toastsHovered;
     /** Whether the HUD is being placed: the overlay shows only the HUD and a hint. */
     private boolean hudEditing;
 
@@ -949,6 +958,9 @@ public final class Overlay implements Function<Object[], Object> {
 
     boolean cursor(double x, double y) {
         input();
+        // Kept while closed too: the elements over the game fade when the pointer is over them.
+        pointerX = x;
+        pointerY = y;
         if (!isOpen()) {
             return false;
         }
@@ -1159,20 +1171,50 @@ public final class Overlay implements Function<Object[], Object> {
             }
         } else if (open) {
             drawOverlay(w, h);
-        } else if (options.hud) {
-            perfView.drawHud(ui, w, h);
         }
         long now = System.currentTimeMillis();
+        gameMenu = !open && platform.gameCursorVisible();
+        gameF3 = hardware.f3Shown();
+        gameList = gameKeys.contains(Keys.TAB);
+        if (!open && options.hud) {
+            float[] hudBox = new float[4];
+            perfView.hudRect(w, h, hudBox);
+            batch.alpha = fade(options.hudHide, hudBox, now);
+            perfView.drawHud(ui, w, h);
+            batch.alpha = 1;
+        }
         // Where the cat is drawn: in the strip under the content card while open, else in the corner.
         float catBottom = open ? h - 3 : h - 10;
         float catPixel = open ? 0.75f : 1.5f;
         boolean catShown = open || options.cat;
-        if (catShown) {
-            cat.draw(ui, 16, catBottom, catPixel, open, now);
-        }
         float[] catBox = catShown ? cat.bounds(ui, 16, catBottom, catPixel, open, now) : null;
-        recorder.drawIndicator(ui, w);
-        drawToasts(w, h, catBox);
+        if (catShown) {
+            batch.alpha = fade(options.catHide, catBox, now);
+            cat.draw(ui, 16, catBottom, catPixel, open, now);
+            batch.alpha = 1;
+        }
+        float[] recBox = recorder.indicatorBox(ui, w);
+        if (recBox != null) {
+            batch.alpha = fade(options.recHide, recBox, now);
+            recorder.drawIndicator(ui, recBox);
+            batch.alpha = 1;
+        }
+        drawToasts(w, h, catBox, now);
+    }
+
+    /** Whether the pointer is over the box {x, y, width, height} of an element that is drawn over the game. */
+    private boolean pointerOver(float[] box) {
+        if (box == null || !gameMenu || pointerX < 0) {
+            return false;
+        }
+        float x = (float) (pointerX * pixelRatio / ui.scale);
+        float y = (float) (pointerY * pixelRatio / ui.scale);
+        return x >= box[0] && x < box[0] + box[2] && y >= box[1] && y < box[1] + box[3];
+    }
+
+    /** The alpha for an element over the game under its auto-hide rules; 1 while the overlay is open. */
+    private float fade(AutoHide hide, float[] box, long now) {
+        return open ? 1 : hide.alpha(pointerOver(box), gameMenu, gameF3, gameList, now);
     }
 
     private void drawOverlay(float w, float h) {
@@ -1367,7 +1409,7 @@ public final class Overlay implements Function<Object[], Object> {
      * Stacks the toasts at the chosen place, newest nearest to the anchor. A toast that would cover
      * the HUD or the cat (with its bubble) moves on along the stack until it clears them.
      */
-    private void drawToasts(float w, float h, float[] catBox) {
+    private void drawToasts(float w, float h, float[] catBox, long now) {
         int pos = options.toastPos;
         boolean up = pos == Options.TOAST_BOTTOM_LEFT || pos == Options.TOAST_BOTTOM_RIGHT;
         boolean left = pos == Options.TOAST_TOP_LEFT || pos == Options.TOAST_BOTTOM_LEFT;
@@ -1385,6 +1427,8 @@ public final class Overlay implements Function<Object[], Object> {
             avoid.add(catBox);
         }
         float gap = 10;
+        boolean hovered = false;
+        batch.alpha = open ? 1 : options.toastHide.alpha(toastsHovered, gameMenu, gameF3, gameList, now);
         for (int i = toasts.size() - 1; i >= 0; i--) {
             Toast toast = toasts.get(i);
             List<int[]> lines = ui.wrap(ui.regular, 13, toast.body, tw - 28);
@@ -1420,6 +1464,7 @@ public final class Overlay implements Function<Object[], Object> {
                 toast.hovered = true;
             }
             toast.box = new float[] {x, ty, tw, th};
+            hovered |= pointerOver(toast.box);
             ui.panel(x, ty, tw, th, 10, Ui.POPUP, Ui.LINE_HOVER);
             ui.round(x + 1, ty + 10, 3, th - 20, 1.5f, Ui.ACCENT);
             ui.text(ui.bold, 13, x + 14, ty + 10, Ui.FG, toast.title);
@@ -1430,5 +1475,7 @@ public final class Overlay implements Function<Object[], Object> {
             }
             y = up ? ty - gap : ty + th + gap;
         }
+        toastsHovered = hovered;
+        batch.alpha = 1;
     }
 }

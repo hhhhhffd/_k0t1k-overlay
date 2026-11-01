@@ -24,6 +24,9 @@ interface Platform {
 
     void setClipboard(String text);
 
+    /** Whether the game shows the cursor now (a screen is open) rather than grabbing it for the camera. */
+    boolean gameCursorVisible();
+
     /** Frees the cursor for the overlay, remembering how the game had it. */
     void showCursor();
 

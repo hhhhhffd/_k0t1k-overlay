@@ -33,6 +33,12 @@ final class SettingsView {
     private final Object hudOpacitySlider = new Object();
     /** A HUD slider moved and the settings are not saved yet; they are on release or close. */
     private boolean hudSliderMoved;
+    /** The opacity slider of an element's auto-hide rules that moved and is saved once released. */
+    private Object fadePending;
+    private final Object hudFadeSlider = new Object();
+    private final Object toastFadeSlider = new Object();
+    private final Object catFadeSlider = new Object();
+    private final Object recFadeSlider = new Object();
     private final TextEdit fakeCpu;
     private final TextEdit fakeThreads;
     private final TextEdit fakeGpu;
@@ -244,7 +250,56 @@ final class SettingsView {
             options.hudGraph = next[6];
             changed();
         }
-        return my + 36;
+        return autoHide(ui, options.hudHide, hudFadeSlider, x, my + 36, w);
+    }
+
+    /**
+     * The opacity of an element over the game and the rules that fade it out, as a slider and a wrapping
+     * row of checkboxes; returns the y below them.
+     */
+    private float autoHide(Ui ui, AutoHide hide, Object slider, float x, float y, float w) {
+        float labelW = 150;
+        float sw = Math.min(260, w - labelW - 60);
+        ui.text(ui.regular, 13, x, y + 1, Ui.MUTED, strings.get("fade.opacity"));
+        int opacity = Math.round(ui.slider(slider, x + labelW, y, sw, AutoHide.MIN_OPACITY, 100, 5, hide.opacity));
+        ui.text(ui.bold, 13, x + labelW + sw + 12, y, Ui.FG, opacity + "%");
+        if (opacity != hide.opacity) {
+            hide.opacity = opacity;
+            fadePending = slider;
+        }
+        if (fadePending == slider && !ui.dragging(slider)) {
+            fadePending = null;
+            changed();
+        }
+        y += 30;
+        ui.text(ui.regular, 13, x, y + 1, Ui.MUTED, strings.get("fade.rules"));
+        String[] keys = {"fade.hover", "fade.hoverFull", "fade.menus", "fade.f3", "fade.list"};
+        boolean[] values = {hide.hoverHide, hide.hoverFull, hide.menus, hide.f3, hide.playerList};
+        boolean[] next = values.clone();
+        float cx = x + labelW;
+        float cy = y;
+        for (int i = 0; i < keys.length; i++) {
+            if (i == 1 && !hide.hoverHide) {
+                continue;
+            }
+            String label = strings.get(keys[i]);
+            float bw = 24 + ui.measure(ui.regular, 13, label) + 20;
+            if (cx + bw > x + w && cx > x + labelW) {
+                cx = x + labelW;
+                cy += 26;
+            }
+            next[i] = ui.checkbox(cx, cy, label, values[i]);
+            cx += bw;
+        }
+        if (!java.util.Arrays.equals(values, next)) {
+            hide.hoverHide = next[0];
+            hide.hoverFull = next[1];
+            hide.menus = next[2];
+            hide.f3 = next[3];
+            hide.playerList = next[4];
+            changed();
+        }
+        return cy + 36;
     }
 
     /** A percent slider with its value to the right; sets {@link #hudSliderMoved} when it changes. */
@@ -304,7 +359,7 @@ final class SettingsView {
         ui.text(ui.regular, 13, x, y + 1, Ui.MUTED, strings.get("toast.duration"));
         options.toastSeconds = toastSlider(ui, toastSlider, x + labelW, y, sw, Options.MIN_TOAST_SECONDS,
                 Options.MAX_TOAST_SECONDS, options.toastSeconds);
-        y += 36;
+        y = autoHide(ui, options.toastHide, toastFadeSlider, x, y + 36, w);
         ui.text(ui.regular, 13, x, y + 4, Ui.MUTED, strings.get("toast.kinds"));
         y += 30;
         for (ToastKind kind : ToastKind.values()) {
@@ -367,12 +422,14 @@ final class SettingsView {
             options.cat = cat;
             changed();
         }
-        return y + 48;
+        return autoHide(ui, options.catHide, catFadeSlider, x, y + 40, w) + 12;
     }
 
     private float recordingSection(Ui ui, float x, float y, float w) {
         y = heading(ui, RECORDING, x, y, w);
-        return recordingView.recording(ui, x, y, w) + 16;
+        y = recordingView.recording(ui, x, y, w) + 16;
+        ui.text(ui.bold, 13, x, y, Ui.FG, strings.get("rec.indicator"));
+        return autoHide(ui, options.recHide, recFadeSlider, x, y + 26, w) + 12;
     }
 
     private float hotkeysSection(Ui ui, float x, float y, float w) {

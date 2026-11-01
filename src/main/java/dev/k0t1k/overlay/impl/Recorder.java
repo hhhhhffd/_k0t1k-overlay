@@ -993,21 +993,28 @@ final class Recorder {
 
     // ---- the red dot ----
 
-    /** The recording indicator, drawn after the frame was captured so it is not in the video. */
-    void drawIndicator(Ui ui, float w) {
+    /** Where the recording indicator is, {x, y, width, height}, or null when nothing is recording. */
+    float[] indicatorBox(Ui ui, float w) {
         Session session = recording;
         if (session == null || session.state != State.RUNNING) {
-            return;
+            return null;
         }
+        long seconds = recordingMillis() / 1000;
+        String widest = seconds >= 3600 ? "0:00:00" : "00:00";
+        // Top right, unless a shown HUD sits in the top right half: then top left.
+        boolean left = options.hud && options.hudX >= 0.5f && options.hudY < 0.5f;
+        float bw = ui.measure(ui.bold, 13, widest) + 38;
+        return new float[] {left ? 12 : w - bw - 12, 12, bw, 26};
+    }
+
+    /** The recording indicator, drawn after the frame was captured so it is not in the video. */
+    void drawIndicator(Ui ui, float[] box) {
         long seconds = recordingMillis() / 1000;
         String time = seconds >= 3600
                 ? String.format(Locale.ROOT, "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
                 : String.format(Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60);
-        float tw = ui.measure(ui.bold, 13, time);
-        // Top right, unless a shown HUD sits in the top right half: then top left.
-        boolean left = options.hud && options.hudX >= 0.5f && options.hudY < 0.5f;
-        float bw = tw + 38;
-        float x = left ? 12 : w - bw - 12;
+        float x = box[0];
+        float bw = box[2];
         ui.round(x, 12, bw, 26, 13, Theme.alpha(Ui.SURFACE, 0xcc));
         if (System.currentTimeMillis() / 600 % 2 == 0) {
             ui.round(x + 10, 21, 8, 8, 4, 0xffed4245);

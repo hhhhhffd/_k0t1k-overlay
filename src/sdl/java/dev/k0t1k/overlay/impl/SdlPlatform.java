@@ -318,6 +318,11 @@ final class SdlPlatform implements SdlBackend {
     }
 
     @Override
+    public boolean gameCursorVisible() {
+        return !SDL_GetWindowRelativeMouseMode(window);
+    }
+
+    @Override
     public void showCursor() {
         savedRelative = SDL_GetWindowRelativeMouseMode(window);
         pendingRelative = savedRelative;
