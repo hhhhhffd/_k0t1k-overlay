@@ -10,7 +10,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -21,7 +23,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -282,15 +289,15 @@ final class BrowserLogins {
         }
         Path tmp = null;
         try {
-            tmp = Files.createTempDirectory("k0t1k-cookies");
+            tmp = createCookieTempDirectory();
             Path tmpDb = tmp.resolve("cookies.sqlite");
             Path wal = profileDir.resolve("cookies.sqlite-wal");
             Path tmpWal = null;
             try {
-                Files.copy(db, tmpDb, StandardCopyOption.REPLACE_EXISTING);
+                copyCookieDatabase(db, tmpDb);
                 if (Files.exists(wal)) {
                     tmpWal = tmp.resolve("cookies.sqlite-wal");
-                    Files.copy(wal, tmpWal, StandardCopyOption.REPLACE_EXISTING);
+                    copyCookieDatabase(wal, tmpWal);
                 }
             } catch (IOException e) {
                 result.error = "locked";
@@ -336,10 +343,10 @@ final class BrowserLogins {
         }
         Path tmp = null;
         try {
-            tmp = Files.createTempDirectory("k0t1k-cookies");
+            tmp = createCookieTempDirectory();
             Path tmpDb = tmp.resolve("Cookies");
             try {
-                Files.copy(cookiesFile, tmpDb, StandardCopyOption.REPLACE_EXISTING);
+                copyCookieDatabase(cookiesFile, tmpDb);
             } catch (IOException e) {
                 result.error = "locked";
                 return;
@@ -349,6 +356,7 @@ final class BrowserLogins {
             try {
                 key = chromiumKey(root);
             } catch (IOException | GeneralSecurityException e) {
+                result.error = e.getMessage();
                 key = null;
             }
             List<Map<String, Object>> rows;
@@ -398,22 +406,30 @@ final class BrowserLogins {
             return null;
         }
         if (!hasPrefix(encrypted, "v10") && !hasPrefix(encrypted, "v11")) {
-            return encrypted; // an old, unprefixed plaintext value
+            // Unprefixed Windows values are raw DPAPI ciphertext, not the plaintext value column.
+            result.undecryptable++;
+            return null;
         }
-        if (key == null) {
-            result.undecryptable++; // e.g. Linux without the "peanuts" fallback (a real keyring, v11)
+        if (key == null || (LINUX && hasPrefix(encrypted, "v11"))) {
+            result.undecryptable++; // v11 on Linux needs the browser's keyring key
             return null;
         }
         byte[] plain;
         try {
             plain = decryptChromiumValue(encrypted, key);
+            if (version >= 24) {
+                byte[] hostHash = MessageDigest.getInstance("SHA-256")
+                        .digest(str(row.get("host_key")).getBytes(StandardCharsets.UTF_8));
+                if (plain.length < hostHash.length
+                        || !MessageDigest.isEqual(hostHash, Arrays.copyOf(plain, hostHash.length))) {
+                    result.undecryptable++;
+                    return null;
+                }
+                plain = Arrays.copyOfRange(plain, hostHash.length, plain.length);
+            }
         } catch (GeneralSecurityException e) {
             result.undecryptable++;
             return null;
-        }
-        if (version >= 24 && plain.length >= 32) {
-            // Chromium >= 130 prepends SHA-256(host_key) to the plaintext.
-            plain = Arrays.copyOfRange(plain, 32, plain.length);
         }
         return plain;
     }
@@ -439,6 +455,9 @@ final class BrowserLogins {
     /** AES-256-GCM on Windows (the DPAPI-unwrapped key); AES-128-CBC with the "peanuts" key on Linux. */
     private static byte[] decryptChromiumValue(byte[] encrypted, byte[] key) throws GeneralSecurityException {
         if (WINDOWS) {
+            if (encrypted.length < 31) {
+                throw new GeneralSecurityException("truncated GCM cookie");
+            }
             byte[] nonce = Arrays.copyOfRange(encrypted, 3, 15);
             byte[] cipherAndTag = Arrays.copyOfRange(encrypted, 15, encrypted.length);
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
@@ -490,24 +509,63 @@ final class BrowserLogins {
         String encodedScript = Base64.getEncoder().encodeToString(script.getBytes(StandardCharsets.UTF_16LE));
         ProcessBuilder builder = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive",
                 "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodedScript);
-        Process process = builder.start();
-        try (OutputStream stdin = process.getOutputStream()) {
-            stdin.write((Base64.getEncoder().encodeToString(data) + "\n").getBytes(StandardCharsets.UTF_8));
-        }
-        String out;
-        try (InputStream in = process.getInputStream()) {
-            out = read(in);
-        }
+        return readDpapiProcess(builder.start(), data, 10_000);
+    }
+
+    private static byte[] readDpapiProcess(Process process, byte[] data, long timeoutMillis) throws IOException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        ExecutorService streams = Executors.newFixedThreadPool(3, task -> {
+            Thread thread = new Thread(task, "overlay-dpapi");
+            thread.setDaemon(true);
+            return thread;
+        });
         try {
-            process.waitFor(10, TimeUnit.SECONDS);
+            Future<String> stdout = streams.submit(() -> {
+                try (InputStream in = process.getInputStream()) {
+                    return read(in);
+                }
+            });
+            Future<String> stderr = streams.submit(() -> {
+                try (InputStream in = process.getErrorStream()) {
+                    return read(in);
+                }
+            });
+            Future<?> stdin = streams.submit(() -> {
+                try (OutputStream out = process.getOutputStream()) {
+                    out.write((Base64.getEncoder().encodeToString(data) + "\n").getBytes(StandardCharsets.UTF_8));
+                }
+                return null;
+            });
+            if (!process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS)) {
+                throw new IOException("DPAPI helper timed out");
+            }
+            if (process.exitValue() != 0) {
+                throw new IOException("DPAPI unprotect failed");
+            }
+            stdin.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            String line = stdout.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS).trim();
+            stderr.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            if (line.isEmpty()) {
+                throw new IOException("DPAPI unprotect failed");
+            }
+            try {
+                return Base64.getDecoder().decode(line);
+            } catch (IllegalArgumentException e) {
+                throw new IOException("invalid DPAPI helper response", e);
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            throw new IOException("DPAPI helper interrupted", e);
+        } catch (TimeoutException e) {
+            throw new IOException("DPAPI helper timed out", e);
+        } catch (ExecutionException e) {
+            throw new IOException("DPAPI helper I/O failed", e.getCause());
+        } finally {
+            if (process.isAlive()) {
+                process.destroyForcibly();
+            }
+            streams.shutdownNow();
         }
-        String line = out.trim();
-        if (line.isEmpty()) {
-            throw new IOException("DPAPI unprotect failed");
-        }
-        return Base64.getDecoder().decode(line);
     }
 
     // ---- small helpers ----
@@ -567,6 +625,24 @@ final class BrowserLogins {
         return new String(out.toByteArray(), StandardCharsets.UTF_8);
     }
 
+    private static Path createCookieTempDirectory() throws IOException {
+        Path dir;
+        try {
+            dir = Files.createTempDirectory("k0t1k-cookies",
+                    PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+        } catch (UnsupportedOperationException e) {
+            dir = Files.createTempDirectory("k0t1k-cookies");
+        }
+        // Register the parent first: deleteOnExit removes children before their directory.
+        dir.toFile().deleteOnExit();
+        return dir;
+    }
+
+    private static void copyCookieDatabase(Path source, Path target) throws IOException {
+        target.toFile().deleteOnExit();
+        Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+    }
+
     private static void deleteTreeQuietly(Path dir) {
         if (dir == null || !Files.exists(dir)) {
             return;
@@ -576,7 +652,7 @@ final class BrowserLogins {
                 Files.deleteIfExists(p);
             }
         } catch (IOException e) {
-            // best effort: a leftover temp file under the system temp dir is harmless
+            System.err.println("[k0t1k-overlay] cookie temp cleanup failed; deletion scheduled on exit");
         }
     }
 }

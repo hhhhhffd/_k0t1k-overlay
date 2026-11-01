@@ -465,11 +465,18 @@ public final class Overlay implements Function<Object[], Object> {
      */
     void importBrowserLogins(BrowserLogins.Source source, BrowserLogins.Profile profile, java.util.function.Consumer<String> onDone) {
         io.execute(() -> {
-            java.util.Set<String> allowlist = BrowserLogins.parseAllowlist(options.browserImportAllowlist);
-            java.util.List<BrowserLogins.Cookie> cookies = new java.util.ArrayList<>();
-            BrowserLogins.Result result = BrowserLogins.importCookies(source, profile, allowlist, cookies);
-            String message = browserLoginMessage(source, profile, cookies, result);
-            render.execute(() -> onDone.accept(message));
+            String message;
+            try {
+                java.util.Set<String> allowlist = BrowserLogins.parseAllowlist(options.browserImportAllowlist);
+                java.util.List<BrowserLogins.Cookie> cookies = new java.util.ArrayList<>();
+                BrowserLogins.Result result = BrowserLogins.importCookies(source, profile, allowlist, cookies);
+                message = browserLoginMessage(source, profile, cookies, result);
+            } catch (RuntimeException | LinkageError e) {
+                report(e);
+                message = strings.format("settings.browserImportErrorGeneric", e.getClass().getSimpleName());
+            }
+            String completedMessage = message;
+            render.execute(() -> onDone.accept(completedMessage));
         });
     }
 
@@ -489,7 +496,8 @@ public final class Overlay implements Function<Object[], Object> {
         for (BrowserLogins.Cookie cookie : cookies) {
             String host = cookie.host.startsWith(".") ? cookie.host.substring(1) : cookie.host;
             String url = (cookie.secure ? "https://" : "http://") + host + cookie.path;
-            if (engine.setCookie(url, cookie.name, cookie.value, cookie.host, cookie.path, cookie.secure,
+            String domain = cookie.host.startsWith(".") ? cookie.host : "";
+            if (engine.setCookie(url, cookie.name, cookie.value, domain, cookie.path, cookie.secure,
                     cookie.httpOnly, cookie.expiresMillis)) {
                 written++;
             }

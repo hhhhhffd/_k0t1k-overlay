@@ -48,9 +48,16 @@ final class SqliteReader {
         if (pageSize == 1) {
             pageSize = 65536; // 1 means 65536, the only page size that does not fit in 16 bits
         }
+        if ((file[20] & 0xFF) != 0) {
+            throw new IOException("SQLite reserved bytes are not supported");
+        }
         Map<Integer, byte[]> walPages = walFile != null && Files.exists(walFile)
                 ? readWal(Files.readAllBytes(walFile), pageSize)
                 : new LinkedHashMap<>();
+        byte[] walHeader = walPages.get(1);
+        if (walHeader != null && (walHeader[20] & 0xFF) != 0) {
+            throw new IOException("SQLite reserved bytes are not supported");
+        }
         SqliteReader reader = new SqliteReader(file, pageSize, walPages);
         return reader.read(table);
     }
@@ -75,6 +82,10 @@ final class SqliteReader {
         if (pageSize != dbPageSize) {
             return pages; // mismatched WAL: ignore it rather than corrupt the read
         }
+        long[] checksum = checksum(wal, 0, 24, 0, 0, bigEndianChecksum);
+        if (checksum[0] != u32(wal, 24) || checksum[1] != u32(wal, 28)) {
+            return pages;
+        }
         int salt1 = (int) u32(wal, 16);
         int salt2 = (int) u32(wal, 20);
         int frameSize = 24 + pageSize;
@@ -84,8 +95,13 @@ final class SqliteReader {
             long dbSizeAfterCommit = u32(wal, offset + 4);
             int frameSalt1 = (int) u32(wal, offset + 8);
             int frameSalt2 = (int) u32(wal, offset + 12);
-            if (frameSalt1 != salt1 || frameSalt2 != salt2) {
-                continue; // a frame from an earlier WAL generation after a checkpoint reset the salts
+            if (pageNumber <= 0 || frameSalt1 != salt1 || frameSalt2 != salt2) {
+                break;
+            }
+            checksum = checksum(wal, offset, 8, checksum[0], checksum[1], bigEndianChecksum);
+            checksum = checksum(wal, offset + 24, pageSize, checksum[0], checksum[1], bigEndianChecksum);
+            if (checksum[0] != u32(wal, offset + 16) || checksum[1] != u32(wal, offset + 20)) {
+                break;
             }
             byte[] page = new byte[pageSize];
             System.arraycopy(wal, offset + 24, page, 0, pageSize);
@@ -96,11 +112,26 @@ final class SqliteReader {
                 pending.clear();
             }
         }
-        if (bigEndianChecksum) {
-            // Checksums are not verified (nothing here signs them against tampering); the byte order
-            // bit only tells frames from a plain append, which both orders parse the same way here.
-        }
         return pages;
+    }
+
+    private static long[] checksum(byte[] data, int offset, int length, long s1, long s2,
+            boolean bigEndian) {
+        for (int i = offset; i < offset + length; i += 8) {
+            long first = checksumWord(data, i, bigEndian);
+            long second = checksumWord(data, i + 4, bigEndian);
+            s1 = (s1 + first + s2) & 0xFFFFFFFFL;
+            s2 = (s2 + second + s1) & 0xFFFFFFFFL;
+        }
+        return new long[] {s1, s2};
+    }
+
+    private static long checksumWord(byte[] data, int offset, boolean bigEndian) {
+        if (bigEndian) {
+            return u32(data, offset);
+        }
+        return (data[offset] & 0xFFL) | ((data[offset + 1] & 0xFFL) << 8)
+                | ((data[offset + 2] & 0xFFL) << 16) | ((data[offset + 3] & 0xFFL) << 24);
     }
 
     // ---- schema ----
@@ -256,7 +287,7 @@ final class SqliteReader {
         long payloadLength = readVarint(page, pos);
         long rowid = readVarint(page, pos);
         int localStart = pos[0];
-        int usable = pageSize; // reserved space at the end of a page is not modelled; unused by these files
+        int usable = pageSize;
         int maxLocal = usable - 35;
         byte[] payload;
         if (payloadLength <= maxLocal) {
