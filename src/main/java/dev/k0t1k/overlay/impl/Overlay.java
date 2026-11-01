@@ -125,7 +125,10 @@ public final class Overlay implements Function<Object[], Object> {
     private static final class Toast {
         final String title;
         final String body;
-        final long until;
+        long until;
+        /** Set while the pointer is over it, so the time left stops running down. */
+        boolean hovered;
+        boolean dismissed;
 
         Toast(String title, String body, long until) {
             this.title = title;
@@ -135,6 +138,7 @@ public final class Overlay implements Function<Object[], Object> {
     }
 
     private final List<Toast> toasts = new ArrayList<>();
+    private long lastToastTick;
     /** Whether the HUD is being placed: the overlay shows only the HUD and a hint. */
     private boolean hudEditing;
 
@@ -176,12 +180,12 @@ public final class Overlay implements Function<Object[], Object> {
         media = new Media(ioThread, render, this::report);
         media.onTrack = track -> {
             if (!open) {
-                toast(strings.get("media.now"), track);
+                toast(ToastKind.MUSIC, strings.get("media.now"), track);
             }
         };
         ffmpeg = new Ffmpeg(options, recordThread);
         recorder = new Recorder(options, ffmpeg, recordThread, render,
-                (title, body) -> render.execute(() -> toast(title, body)), this::report);
+                (kind, title, body) -> render.execute(() -> toast(kind, title, body)), this::report);
         protection = new Protection(options, options.dataDir, io, protectionThread, this::report);
         browser = new Browser(options.dataDir, io, options.lang, protection);
         browserView = new BrowserView(browser, strings, this, io, protection);
@@ -192,7 +196,7 @@ public final class Overlay implements Function<Object[], Object> {
         notes.load();
         screenshots.start();
         Runtime.getRuntime().addShutdownHook(new Thread(this::saveOnExit, "k0t1k-overlay-exit"));
-        toast(strings.get("welcome"), strings.get("welcome.body"));
+        toast(ToastKind.WELCOME, strings.get("welcome"), strings.get("welcome.body"));
         log("started, data in " + options.dataDir);
     }
 
@@ -456,7 +460,7 @@ public final class Overlay implements Function<Object[], Object> {
     /** Whether this game's renderer can give frames to the recorder; says why not when it cannot. */
     boolean captureSupported() {
         if (!captureAvailable()) {
-            toast(strings.get("rec.title"), strings.get(legacyRenderer() ? "rec.legacy" : "rec.unsupported"));
+            toast(ToastKind.RECORDING, strings.get("rec.title"), strings.get(legacyRenderer() ? "rec.legacy" : "rec.unsupported"));
             return false;
         }
         return true;
@@ -476,7 +480,7 @@ public final class Overlay implements Function<Object[], Object> {
     void replayFailed(Throwable error) {
         captureBroken = true;
         recorder.failed(error);
-        toast(strings.get("rec.title"), strings.get("rec.unsupported"));
+        toast(ToastKind.RECORDING, strings.get("rec.title"), strings.get("rec.unsupported"));
     }
 
     Recorder recorder() {
@@ -661,8 +665,12 @@ public final class Overlay implements Function<Object[], Object> {
         return Thread.currentThread() == renderThread;
     }
 
-    void toast(String title, String body) {
-        toasts.add(new Toast(title, body, System.currentTimeMillis() + 4500));
+    void toast(ToastKind kind, String title, String body) {
+        long millis = options.toastMillis(kind);
+        if (millis == 0) {
+            return;
+        }
+        toasts.add(new Toast(title, body, System.currentTimeMillis() + millis));
         if (toasts.size() > 4) {
             toasts.remove(0);
         }
@@ -684,7 +692,7 @@ public final class Overlay implements Function<Object[], Object> {
             return;
         }
         if (!open && mentions(line.text, name)) {
-            toast(strings.get("chat.mention"), line.text);
+            toast(ToastKind.MENTION, strings.get("chat.mention"), line.text);
         }
     }
 
@@ -743,13 +751,13 @@ public final class Overlay implements Function<Object[], Object> {
     }
 
     private void achievement(String id) {
-        toast(strings.get("ach.unlocked"), strings.get("ach." + id));
+        toast(ToastKind.ACHIEVEMENT, strings.get("ach.unlocked"), strings.get("ach." + id));
         catSays("cat.achievement");
     }
 
     private void timerFired(Timers.Timer timer) {
         stats.add("timers", 1);
-        toasts.add(new Toast(strings.get("tools.timerDone"), timer.label, System.currentTimeMillis() + 12000));
+        toast(ToastKind.TIMER, strings.get("tools.timerDone"), timer.label);
         if (cat != null && options.cat) {
             cat.say(timer.label);
         }
@@ -761,7 +769,7 @@ public final class Overlay implements Function<Object[], Object> {
         String where = game.available && game.inWorld ? game.blockPosition() : "";
         screenshots.caption(name, instance, game.inWorld ? game.dimension : "", where);
         String body = instance + (where.isEmpty() ? "" : " · " + where) + "\n" + name;
-        toast(strings.get("shot.saved"), body);
+        toast(ToastKind.SCREENSHOT, strings.get("shot.saved"), body);
         catSays("cat.shot1", "cat.shot2");
     }
 
@@ -836,7 +844,7 @@ public final class Overlay implements Function<Object[], Object> {
                     keyCapture.accept(Hotkeys.of(key, mods));
                     keyCapture = null;
                 } else {
-                    toast(strings.get("hotkeys.title"), strings.get("hotkeys.needMod"));
+                    toast(ToastKind.OTHER, strings.get("hotkeys.title"), strings.get("hotkeys.needMod"));
                 }
             }
             return true;
@@ -1016,10 +1024,16 @@ public final class Overlay implements Function<Object[], Object> {
             recorder.tick();
         }
         for (Iterator<Toast> it = toasts.iterator(); it.hasNext(); ) {
-            if (it.next().until < now) {
+            Toast toast = it.next();
+            if (toast.hovered) {
+                toast.until += now - lastToastTick;
+                toast.hovered = false;
+            }
+            if (toast.dismissed || toast.until < now) {
                 it.remove();
             }
         }
+        lastToastTick = now;
         if (!open && !options.hud && toasts.isEmpty() && !recorder.recording() && (cat == null || !cat.talking(now))) {
             return false; // nothing on screen, so the game's frame stays untouched
         }
@@ -1355,6 +1369,13 @@ public final class Overlay implements Function<Object[], Object> {
             }
             // When neither side has room, overlap the obstacle rather than leave the screen.
             ty = Math.max(0, Math.min(ty, maxY));
+            // Pointer interaction only exists while the overlay is open.
+            if (open && ui.hover(x, ty, tw, th)) {
+                toast.hovered = true;
+                if (ui.clickedIn(x, ty, tw, th)) {
+                    toast.dismissed = true;
+                }
+            }
             ui.panel(x, ty, tw, th, 10, 0xf21b1728, 0xff3a3256);
             ui.round(x + 1, ty + 10, 3, th - 20, 1.5f, Ui.ACCENT);
             ui.text(ui.bold, 13, x + 14, ty + 10, Ui.FG, toast.title);

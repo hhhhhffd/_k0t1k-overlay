@@ -135,10 +135,10 @@ final class ModsView {
     private void open(String url) {
         try {
             Links.browse(url);
-            overlay.toast(strings.get("mods.opened"), url);
+            overlay.toast(ToastKind.OTHER, strings.get("mods.opened"), url);
         } catch (IOException e) {
             overlay.report(e);
-            overlay.toast(strings.get("error"), e.getMessage());
+            overlay.toast(ToastKind.ERROR, strings.get("error"), e.getMessage());
         }
     }
 }

@@ -104,7 +104,7 @@ final class ToolsView {
         ui.textFit(ui.regular, 12, tx, cy + (30 - ui.lineHeight(ui.regular, 12)) / 2, px + pw - tx, Ui.MUTED, where);
         if (canFill && ui.hover(tx, cy, px + pw - tx, 30) && ui.clickedIn(tx, cy, px + pw - tx, 30)) {
             ui.platform.setClipboard(game.blockPosition());
-            overlay.toast(strings.get("chat.copied"), game.blockPosition());
+            overlay.toast(ToastKind.OTHER, strings.get("chat.copied"), game.blockPosition());
         }
     }
 
@@ -201,7 +201,7 @@ final class ToolsView {
         }
         if (submit) {
             if (due < 0) {
-                overlay.toast(strings.get("tools.timers"), strings.get("tools.badTime"));
+                overlay.toast(ToastKind.OTHER, strings.get("tools.timers"), strings.get("tools.badTime"));
             } else {
                 String label = timerLabel.value().trim();
                 timers.add(label.isEmpty() ? strings.get("tools.timerDefault") : label, due, now);
@@ -324,7 +324,7 @@ final class ToolsView {
                 Links.folder(screenshots.folder);
             } catch (IOException e) {
                 overlay.report(e);
-                overlay.toast(strings.get("error"), e.getMessage());
+                overlay.toast(ToastKind.ERROR, strings.get("error"), e.getMessage());
             }
         }
         float cy = replay(ui, px, y + 44, pw);
@@ -352,7 +352,7 @@ final class ToolsView {
             if (hot && ui.clickedIn(px - 6, cy, pw + 12, rowH - 2)) {
                 String path = screenshots.folder.resolve(name).toString();
                 ui.platform.setClipboard(path);
-                overlay.toast(strings.get("chat.copied"), path);
+                overlay.toast(ToastKind.OTHER, strings.get("chat.copied"), path);
             }
             cy += rowH;
         }

@@ -170,7 +170,7 @@ final class ChatView {
         }
         if (hot && ui.clickedIn(x - 6, y, w + 12, row.h)) {
             ui.platform.setClipboard(text);
-            overlay.toast(strings.get("chat.copied"), text);
+            overlay.toast(ToastKind.OTHER, strings.get("chat.copied"), text);
         }
     }
 

@@ -27,6 +27,9 @@ final class SettingsView {
     /** The percent shown while the scale slider is dragged; the scale itself changes on release. */
     private int draggedScale;
     private final Object hudSizeSlider = new Object();
+    private final Object toastSlider = new Object();
+    private final Object[] toastKindSliders = new Object[ToastKind.values().length];
+    private boolean toastSliderMoved;
     private final Object hudOpacitySlider = new Object();
     /** A HUD slider moved and the settings are not saved yet; they are on release or close. */
     private boolean hudSliderMoved;
@@ -254,8 +257,63 @@ final class SettingsView {
         return moved;
     }
 
+    /** A seconds slider with its value to the right; sets {@link #toastSliderMoved} when it changes. */
+    private int toastSlider(Ui ui, Object id, float x, float y, float w, int min, int max, int value) {
+        int moved = Math.round(ui.slider(id, x, y, w, min, max, 1, value));
+        if (moved != value) {
+            toastSliderMoved = true;
+        }
+        ui.text(ui.bold, 13, x + w + 12, y, Ui.FG, moved + " " + strings.get("toast.sec"));
+        return moved;
+    }
+
+    /** One notification type: a checkbox, "same as above" and its own lifetime slider. */
+    private float toastKindRow(Ui ui, ToastKind kind, float x, float y, float w) {
+        int i = kind.ordinal();
+        boolean shown = ui.checkbox(x, y + 2, strings.get("toast.kind." + kind.id), options.toastShown[i]);
+        if (shown != options.toastShown[i]) {
+            options.toastShown[i] = shown;
+            changed();
+        }
+        float px = x + 190;
+        String same = strings.get("toast.same");
+        float pw = ui.measure(ui.bold, 13, same) + 24;
+        int own = options.toastKindSeconds[i];
+        if (ui.pill(px, y, pw, 28, same, own == 0) && own != 0) {
+            options.toastKindSeconds[i] = 0;
+            changed();
+        }
+        if (toastKindSliders[i] == null) {
+            toastKindSliders[i] = new Object();
+        }
+        float sx = px + pw + 12;
+        float sw = Math.max(60, Math.min(160, x + w - sx - 56));
+        int shownSeconds = own > 0 ? own : options.toastSeconds;
+        int moved = toastSlider(ui, toastKindSliders[i], sx, y + 6, sw, 1, Options.MAX_KIND_TOAST_SECONDS,
+                shownSeconds);
+        if (moved != shownSeconds) {
+            options.toastKindSeconds[i] = moved;
+        }
+        return y + 32;
+    }
+
     private float notifySection(Ui ui, float x, float y, float w) {
         y = heading(ui, NOTIFY, x, y, w);
+        float labelW = 150;
+        float sw = Math.min(260, w - labelW - 60);
+        ui.text(ui.regular, 13, x, y + 1, Ui.MUTED, strings.get("toast.duration"));
+        options.toastSeconds = toastSlider(ui, toastSlider, x + labelW, y, sw, Options.MIN_TOAST_SECONDS,
+                Options.MAX_TOAST_SECONDS, options.toastSeconds);
+        y += 36;
+        ui.text(ui.regular, 13, x, y + 4, Ui.MUTED, strings.get("toast.kinds"));
+        y += 30;
+        for (ToastKind kind : ToastKind.values()) {
+            if (kind != ToastKind.TEST) {
+                y = toastKindRow(ui, kind, x, y, w);
+            }
+        }
+        y += 10;
+
         ui.text(ui.regular, 13, x, y + 4, Ui.MUTED, strings.get("toast.position"));
         y += 30;
         String[] keys = {"toast.center", "toast.topLeft", "toast.topRight", "toast.bottomLeft", "toast.bottomRight"};
@@ -286,10 +344,20 @@ final class SettingsView {
         }
         String test = strings.get("toast.test");
         if (ui.button(x + dw + 20, y + (dh - 30) / 2, ui.buttonWidth(test), 30, test, false)) {
-            overlay.toast(strings.get("toast.test"), strings.get("toast.testBody"));
+            overlay.toast(ToastKind.TEST, strings.get("toast.test"), strings.get("toast.testBody"));
+        }
+        // Sliders save once they are let go, not on every step of the drag.
+        if (toastSliderMoved && !ui.dragging(toastSlider)) {
+            boolean dragging = false;
+            for (Object id : toastKindSliders) {
+                dragging |= id != null && ui.dragging(id);
+            }
+            if (!dragging) {
+                toastSliderMoved = false;
+                changed();
+            }
         }
         return y + dh + 24;
-
     }
 
     private float catSection(Ui ui, float x, float y, float w) {
