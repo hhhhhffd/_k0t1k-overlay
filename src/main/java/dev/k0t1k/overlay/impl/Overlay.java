@@ -774,11 +774,23 @@ public final class Overlay implements Function<Object[], Object> {
             int end = at + lower.length();
             boolean endOk = end == text.length() || !Character.isLetterOrDigit(text.charAt(end)) && text.charAt(end) != '_';
             if (startOk && endOk) {
-                return true;
+                // The first time the name appears decides: when a message separator follows it, it is the
+                // author's name in the server's chat format ("[Rank] Name: ...", "Name » ..."), so the line is
+                // the player's own message.
+                return !followedBySeparator(text, end);
             }
             at = text.indexOf(lower, at + 1);
         }
         return false;
+    }
+
+    /** Whether the first non-space character at or after {@code from} separates a chat author from the message. */
+    private static boolean followedBySeparator(String text, int from) {
+        int i = from;
+        while (i < text.length() && text.charAt(i) == ' ') {
+            i++;
+        }
+        return i < text.length() && ":>»›→➤|".indexOf(text.charAt(i)) >= 0;
     }
 
     private void catSays(String... keys) {
