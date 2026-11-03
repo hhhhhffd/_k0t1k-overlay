@@ -22,7 +22,16 @@ final class PerfView {
     }
 
     static String mb(long bytes) {
-        return bytes >= 1L << 30 ? String.format("%.1f GB", bytes / (double) (1L << 30)) : (bytes >> 20) + " MB";
+        return bytes >= 1L << 30 ? oneDecimal(bytes / (double) (1L << 30)) + " GB" : (bytes >> 20) + " MB";
+    }
+
+    /**
+     * A non-negative number with one decimal, like {@code %.1f} in the root locale; the HUD shows a few
+     * every frame, and a format call builds a Formatter each time.
+     */
+    static String oneDecimal(double value) {
+        long tenths = Math.round(value * 10);
+        return tenths / 10 + "." + tenths % 10;
     }
 
     void draw(Ui ui, float x, float y, float w, float h) {
@@ -31,9 +40,9 @@ final class PerfView {
         float cardH = 74;
         card(ui, x, y, cardW, cardH, strings.get("perf.fps"), Integer.toString(perf.fps), Ui.FG, null);
         card(ui, x + (cardW + gap), y, cardW, cardH, strings.get("perf.frame"),
-                String.format("%.1f ms", perf.average), frameColor(perf.average), null);
+                oneDecimal(perf.average) + " ms", frameColor(perf.average), null);
         card(ui, x + (cardW + gap) * 2, y, cardW, cardH, strings.get("perf.low"),
-                String.format("%.1f ms", perf.worst), frameColor(perf.worst), null);
+                oneDecimal(perf.worst) + " ms", frameColor(perf.worst), null);
         float heapShare = perf.heapMax > 0 ? perf.heapUsed / (float) perf.heapMax : 0;
         card(ui, x + (cardW + gap) * 3, y, cardW, cardH, strings.get("perf.heap"), mb(perf.heapUsed),
                 heapShare > 0.9f ? Ui.DANGER : Ui.FG, "/ " + mb(perf.heapMax));
@@ -151,12 +160,12 @@ final class PerfView {
             ty += HUD_ROW;
         }
         if (options.hudFrame) {
-            row(ui, left, right, ty, strings.get("perf.frame"), String.format("%.1f ms", perf.average),
+            row(ui, left, right, ty, strings.get("perf.frame"), oneDecimal(perf.average) + " ms",
                     frameColor(perf.average), false);
             ty += HUD_ROW;
         }
         if (options.hudLow) {
-            row(ui, left, right, ty, strings.get("perf.low"), String.format("%.1f ms", perf.worst),
+            row(ui, left, right, ty, strings.get("perf.low"), oneDecimal(perf.worst) + " ms",
                     frameColor(perf.worst), false);
             ty += HUD_ROW;
         }

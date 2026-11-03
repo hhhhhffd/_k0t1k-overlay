@@ -1070,6 +1070,11 @@ public final class Overlay implements Function<Object[], Object> {
      * runs posted work and, when anything is on screen, fills {@link #batch} for a target of
      * {@code width} x {@code height} pixels. Returns whether there is something to draw.
      */
+    /** {@link Platform#contentScale} and {@link Platform#monitorWidth}, refreshed by {@link #buildFrame}. */
+    private float contentScale = 1;
+    private int monitorWidth;
+    private long screenCheckedAt;
+
     boolean buildFrame(int width, int height) {
         renderThread = Thread.currentThread();
         perf.frame();
@@ -1107,11 +1112,18 @@ public final class Overlay implements Function<Object[], Object> {
         pixelRatio = width / (float) sizes[2];
         // Framebuffer pixels per logical unit of the OS: its content scale, or the framebuffer
         // density where the window is counted in points (macOS, Wayland).
-        float density = Math.max(platform.contentScale(), pixelRatio);
+        // The window's content scale and monitor take several GLFW calls to read and change rarely
+        // (a move to another screen), so they are read twice a second, not every frame.
+        if (now - screenCheckedAt >= 500) {
+            screenCheckedAt = now;
+            contentScale = platform.contentScale();
+            monitorWidth = platform.monitorWidth();
+        }
+        float density = Math.max(contentScale, pixelRatio);
         // The launcher's page is zoomed by its setting, or by a step chosen from its screen width in
         // logical pixels; automatic follows it so both look the same size.
         autoPercent = options.launcherScale > 0 ? options.launcherScale
-                : Options.autoScale(platform.monitorWidth() / platform.contentScale());
+                : Options.autoScale(monitorWidth / contentScale);
         float scale = density * (options.uiScale > 0 ? options.uiScale : autoPercent) / 100f;
         // Only a window too small for the interface shrinks it; anything bigger keeps the chosen size.
         float fit = Math.min(width / 640f, height / 360f);

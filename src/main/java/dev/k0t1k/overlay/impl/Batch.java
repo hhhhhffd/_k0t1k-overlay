@@ -187,9 +187,26 @@ final class Batch {
         quads++;
     }
 
+    private static final boolean LITTLE_ENDIAN = ByteOrder.nativeOrder() == ByteOrder.LITTLE_ENDIAN;
+
+    /** Writes one vertex with absolute puts, which skip the per-call position bookkeeping of relative ones. */
     private void vertex(float x, float y, float u, float v, float hw, float hh, float radius, float mode, int argb) {
-        vertices.putFloat(x).putFloat(y).putFloat(u).putFloat(v)
-                .putFloat(hw).putFloat(hh).putFloat(radius).putFloat(mode)
-                .put((byte) (argb >> 16)).put((byte) (argb >> 8)).put((byte) argb).put((byte) (argb >>> 24));
+        ByteBuffer out = vertices;
+        int p = out.position();
+        out.putFloat(p, x);
+        out.putFloat(p + 4, y);
+        out.putFloat(p + 8, u);
+        out.putFloat(p + 12, v);
+        out.putFloat(p + 16, hw);
+        out.putFloat(p + 20, hh);
+        out.putFloat(p + 24, radius);
+        out.putFloat(p + 28, mode);
+        // The colour goes to memory as the bytes R, G, B, A.
+        int r = argb >> 16 & 0xff;
+        int g = argb >> 8 & 0xff;
+        int b = argb & 0xff;
+        int a = argb >>> 24;
+        out.putInt(p + 32, LITTLE_ENDIAN ? a << 24 | b << 16 | g << 8 | r : r << 24 | g << 16 | b << 8 | a);
+        out.position(p + STRIDE);
     }
 }

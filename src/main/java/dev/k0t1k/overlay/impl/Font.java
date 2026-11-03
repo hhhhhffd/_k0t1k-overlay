@@ -1,8 +1,7 @@
 package dev.k0t1k.overlay.impl;
 
 import java.nio.ByteBuffer;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.Arrays;
 
 /**
  * A font rasterised on demand into the shared atlas of {@link Batch}. Glyphs are cached per pixel
@@ -12,11 +11,13 @@ import java.util.Map;
  */
 abstract class Font {
     private final Atlas atlas;
-    private final Map<Long, Glyph> glyphs = new HashMap<>();
-    /** A direct-mapped cache in front of {@link #glyphs}, so a hit allocates no boxed key. */
-    private static final int RECENT = 1024;
-    private final long[] recentKeys = new long[RECENT];
-    private final Glyph[] recent = new Glyph[RECENT];
+    /**
+     * The rasterised glyphs by (size, codepoint) key, an open-addressing table with linear probing: a
+     * lookup on every glyph drawn each frame allocates nothing (a boxed map key would).
+     */
+    private long[] keys = new long[1024];
+    private Glyph[] values = new Glyph[1024];
+    private int stored;
     private int generation;
 
     static final class Glyph {
@@ -104,24 +105,49 @@ abstract class Font {
 
     final Glyph glyph(int codepoint, float px) {
         if (generation != atlas.generation) {
-            glyphs.clear();
-            java.util.Arrays.fill(recent, null);
+            Arrays.fill(values, null);
+            stored = 0;
             generation = atlas.generation;
         }
         int size = Math.round(px * 4); // quarter-pixel buckets
         long key = ((long) size << 32) | (codepoint & 0xffffffffL);
-        int slot = (int) ((key * 0x9E3779B97F4A7C15L) >>> 54) & (RECENT - 1);
-        if (recent[slot] != null && recentKeys[slot] == key) {
-            return recent[slot];
+        int mask = keys.length - 1;
+        int slot = slot(key, mask);
+        for (; values[slot] != null; slot = (slot + 1) & mask) {
+            if (keys[slot] == key) {
+                return values[slot];
+            }
         }
-        Glyph glyph = glyphs.get(key);
-        if (glyph == null) {
-            glyph = rasterise(codepoint, size / 4f);
-            glyphs.put(key, glyph);
+        Glyph glyph = rasterise(codepoint, size / 4f);
+        keys[slot] = key;
+        values[slot] = glyph;
+        if (++stored * 2 > keys.length) {
+            grow();
         }
-        recentKeys[slot] = key;
-        recent[slot] = glyph;
         return glyph;
+    }
+
+    private static int slot(long key, int mask) {
+        return (int) ((key * 0x9E3779B97F4A7C15L) >>> 40) & mask;
+    }
+
+    /** Doubles the table, keeping it at most half full so probes stay short. */
+    private void grow() {
+        long[] oldKeys = keys;
+        Glyph[] oldValues = values;
+        keys = new long[oldKeys.length * 2];
+        values = new Glyph[oldValues.length * 2];
+        int mask = keys.length - 1;
+        for (int i = 0; i < oldKeys.length; i++) {
+            if (oldValues[i] != null) {
+                int slot = slot(oldKeys[i], mask);
+                while (values[slot] != null) {
+                    slot = (slot + 1) & mask;
+                }
+                keys[slot] = oldKeys[i];
+                values[slot] = oldValues[i];
+            }
+        }
     }
 
     /** Copies a rasterised glyph bitmap into the atlas; blank when the atlas is full. */
