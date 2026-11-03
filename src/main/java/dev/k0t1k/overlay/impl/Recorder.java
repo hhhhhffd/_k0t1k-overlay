@@ -67,6 +67,8 @@ final class Recorder {
     private static final int EXIT_WAIT_SECONDS = 10;
     /** How long a stop waits for a frame write that does not return before it kills ffmpeg. */
     private static final int STUCK_WRITE_SECONDS = 2;
+    /** How often {@link #tick} looks for changed recording settings. */
+    private static final int SIGNATURE_CHECK_MILLIS = 250;
     private static final String COLOR_TAGS = "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv";
     private static final String[] AUDIO_NAMES = {"Game", "Desktop", "Microphone"};
 
@@ -90,6 +92,7 @@ final class Recorder {
     private String bufferBlockedBy;
     private String bufferSignature = "";
     private long signatureChangedAt;
+    private long signatureCheckedAt;
     private boolean bufferWasWanted;
     /** The last file saved, for the WebP button. */
     private volatile Path lastClip;
@@ -289,15 +292,19 @@ final class Recorder {
             bufferWasWanted = wanted;
             bufferBlockedBy = null;
         }
-        String signature = signature();
         long now = System.currentTimeMillis();
-        if (!signature.equals(bufferSignature)) {
-            bufferSignature = signature;
-            signatureChangedAt = now;
-            bufferBlockedBy = null;
+        // Building the signature takes a dozen string conversions; settings are not checked every frame.
+        if (now - signatureCheckedAt >= SIGNATURE_CHECK_MILLIS) {
+            signatureCheckedAt = now;
+            String signature = signature();
+            if (!signature.equals(bufferSignature)) {
+                bufferSignature = signature;
+                signatureChangedAt = now;
+                bufferBlockedBy = null;
+            }
         }
         session = buffer;
-        if (session != null && (!wanted || !session.signature.equals(signature) && now - signatureChangedAt > 1500)) {
+        if (session != null && (!wanted || !session.signature.equals(bufferSignature) && now - signatureChangedAt > 1500)) {
             // Settings changed (after the player stopped dragging a slider) or the buffer was turned off.
             Session stopping = session;
             if (session.state == State.WAITING) {
@@ -326,31 +333,33 @@ final class Recorder {
         if (broken || shuttingDown || r == null && b == null || frameWidth < 2 || frameHeight < 2) {
             return false;
         }
-        int fps = 0;
-        for (Session session : new Session[] {r, b}) {
-            if (session == null) {
-                continue;
-            }
-            if (session.state == State.WAITING) {
-                if (width == 0) {
-                    int[] size = target(frameWidth, frameHeight);
-                    width = size[0];
-                    height = size[1];
-                }
-                session.state = State.STARTING;
-                session.width = width;
-                session.height = height;
-                io.execute(session::launch);
-            } else if (session.state == State.RUNNING) {
-                fps = Math.max(fps, session.fps);
-            }
-        }
+        int fps = Math.max(prepare(r, frameWidth, frameHeight), prepare(b, frameWidth, frameHeight));
         long now = System.nanoTime();
         if (fps == 0 || now < nextCapture) {
             return false;
         }
         nextCapture = Math.max(nextCapture + 1_000_000_000L / fps, now);
         return true;
+    }
+
+    /** Starts a session that waits for the frame size; returns its frame rate when it runs, else 0. */
+    private int prepare(Session session, int frameWidth, int frameHeight) {
+        if (session == null) {
+            return 0;
+        }
+        if (session.state == State.WAITING) {
+            if (width == 0) {
+                int[] size = target(frameWidth, frameHeight);
+                width = size[0];
+                height = size[1];
+            }
+            session.state = State.STARTING;
+            session.width = width;
+            session.height = height;
+            io.execute(session::launch);
+            return 0;
+        }
+        return session.state == State.RUNNING ? session.fps : 0;
     }
 
     /** The encoded size for a frame size and the resolution setting, both even. */
@@ -418,16 +427,15 @@ final class Recorder {
         try {
             for (;;) {
                 Frame frame = queue.take();
-                Session first = null;
-                Session second = null;
-                for (Session session : new Session[] {recording, buffer}) {
-                    if (session != null && session.accepts(frame.width, frame.height)) {
-                        if (first == null) {
-                            first = session;
-                        } else {
-                            second = session;
-                        }
-                    }
+                // Frames come at the higher rate of the two sessions; each takes only those its own rate is due for.
+                long now = System.nanoTime();
+                Session r = recording;
+                Session b = buffer;
+                Session first = r != null && r.takes(frame, now) ? r : null;
+                Session second = b != null && b.takes(frame, now) ? b : null;
+                if (first == null) {
+                    first = second;
+                    second = null;
                 }
                 if (first == null) {
                     frame.home.offer(frame);
@@ -554,6 +562,8 @@ final class Recorder {
         private final ArrayBlockingQueue<Frame> pending = new ArrayBlockingQueue<>(1);
         private Thread feeder;
         private volatile boolean feeding;
+        /** When this session wants its next frame, in {@link System#nanoTime} terms; writer thread only. */
+        private long nextFrame;
         /** Whether the audio helpers were told when the first frame went out. */
         private boolean aligned;
 
@@ -776,9 +786,21 @@ final class Recorder {
             }
         }
 
-        /** Whether a frame of this size is wanted now; called on the dispatching writer thread. */
-        boolean accepts(int frameWidth, int frameHeight) {
-            return state == State.RUNNING && frameWidth == width && frameHeight == height;
+        /**
+         * Whether this frame is wanted: the session runs, the size matches and the session's own frame
+         * rate is due. Called on the dispatching writer thread only, which owns {@link #nextFrame}.
+         */
+        boolean takes(Frame frame, long now) {
+            if (state != State.RUNNING || frame.width != width || frame.height != height) {
+                return false;
+            }
+            long interval = 1_000_000_000L / fps;
+            // A quarter interval of slack, so a frame that arrives a little early is not skipped for a late one.
+            if (now < nextFrame - interval / 4) {
+                return false;
+            }
+            nextFrame = Math.max(nextFrame + interval, now - interval / 4);
+            return true;
         }
 
         /** Queues a frame for the session's thread; a frame it cannot take is dropped and returned. */
@@ -799,11 +821,27 @@ final class Recorder {
             }
         }
 
-        /** The session's own thread: writes frames to ffmpeg. A broken pipe means ffmpeg died. */
+        /**
+         * The session's own thread: writes frames to ffmpeg. A broken pipe means ffmpeg died. Once a stop
+         * clears {@link #feeding}, the frame still queued is written too before the thread ends, so the
+         * video does not lose its last frame.
+         */
         private void feed() {
             try {
-                while (feeding) {
-                    Frame frame = pending.take();
+                for (;;) {
+                    Frame frame;
+                    if (feeding) {
+                        try {
+                            frame = pending.take();
+                        } catch (InterruptedException e) {
+                            continue; // woken by a stop: write what is left
+                        }
+                    } else {
+                        frame = pending.poll();
+                        if (frame == null) {
+                            return;
+                        }
+                    }
                     try {
                         if (!aligned) {
                             // The first frame is the start of the video; the audio helpers cut what came before.
@@ -829,8 +867,6 @@ final class Recorder {
                         frame.release();
                     }
                 }
-            } catch (InterruptedException e) {
-                // Stopping.
             } finally {
                 drainPending();
             }
