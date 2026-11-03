@@ -76,6 +76,9 @@ final class GlRenderer {
     private final int atlas;
     private final int image;
     private long imageVersion = -1;
+    /** The size {@link #image}'s storage was made with; 0 before the first picture. */
+    private int imageTextureWidth;
+    private int imageTextureHeight;
     private final boolean samplers;
     private int height;
 
@@ -91,8 +94,7 @@ final class GlRenderer {
     GlRenderer() {
         GLCapabilities caps = GL.getCapabilities();
         samplers = caps.OpenGL33 || caps.GL_ARB_sampler_objects;
-        legacy = !caps.OpenGL32
-                || (glGetInteger(org.lwjgl.opengl.GL32.GL_CONTEXT_PROFILE_MASK) & org.lwjgl.opengl.GL32.GL_CONTEXT_CORE_PROFILE_BIT) == 0;
+        legacy = compatibility(caps);
         saveState();
         try {
             program = link(compile(GL_VERTEX_SHADER, VERTEX), compile(GL_FRAGMENT_SHADER, FRAGMENT));
@@ -154,6 +156,25 @@ final class GlRenderer {
             glUniform1i(glGetUniformLocation(program, "uImage"), 1);
         } finally {
             restoreState();
+        }
+    }
+
+    /** Whether the current context is a compatibility one, where fixed-function state still exists. */
+    static boolean compatibility(GLCapabilities caps) {
+        return !caps.OpenGL32
+                || (glGetInteger(org.lwjgl.opengl.GL32.GL_CONTEXT_PROFILE_MASK) & org.lwjgl.opengl.GL32.GL_CONTEXT_CORE_PROFILE_BIT) == 0;
+    }
+
+    /**
+     * Puts back the polygon mode read from {@code GL_POLYGON_MODE} (front, back). Only a compatibility
+     * context can hold different modes for the two faces; a core one accepts {@code GL_FRONT_AND_BACK} only.
+     */
+    static void restorePolygonMode(boolean compatibility, int front, int back) {
+        if (compatibility && front != back) {
+            glPolygonMode(GL_FRONT, front);
+            glPolygonMode(GL_BACK, back);
+        } else {
+            glPolygonMode(GL_FRONT_AND_BACK, front);
         }
     }
 
@@ -231,7 +252,14 @@ final class GlRenderer {
                 }
                 ByteBuffer pixels = batch.image.duplicate();
                 pixels.position(0).limit(batch.imageWidth * batch.imageHeight * 4);
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, batch.imageWidth, batch.imageHeight, 0, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
+                if (batch.imageWidth != imageTextureWidth || batch.imageHeight != imageTextureHeight) {
+                    // New storage only for a new size; otherwise the pixels go into the existing one.
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, batch.imageWidth, batch.imageHeight, 0, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
+                    imageTextureWidth = batch.imageWidth;
+                    imageTextureHeight = batch.imageHeight;
+                } else {
+                    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, batch.imageWidth, batch.imageHeight, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
+                }
                 imageVersion = batch.imageVersion;
                 glActiveTexture(GL_TEXTURE0);
             }
@@ -306,6 +334,7 @@ final class GlRenderer {
         ints.clear();
         glGetIntegerv(GL_POLYGON_MODE, ints);
         saved[i] = ints.get(0);
+        saved[i + 1] = ints.get(1);
         ints.clear();
         glGetIntegerv(GL_VIEWPORT, ints);
         ints.get(savedViewport);
@@ -359,7 +388,7 @@ final class GlRenderer {
             toggle(GL_ALPHA_TEST, saved[i]);
         }
         i++;
-        glPolygonMode(GL_FRONT_AND_BACK, saved[i]);
+        restorePolygonMode(legacy, saved[i], saved[i + 1]);
         glViewport(savedViewport[0], savedViewport[1], savedViewport[2], savedViewport[3]);
         glScissor(savedScissor[0], savedScissor[1], savedScissor[2], savedScissor[3]);
         glColorMask(savedColorMask[0], savedColorMask[1], savedColorMask[2], savedColorMask[3]);

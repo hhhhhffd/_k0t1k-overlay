@@ -71,11 +71,15 @@ final class GlCapture {
     private final long[] fence = new long[SLOTS];
     private int next;
     private final IntBuffer ints = BufferUtils.createIntBuffer(16);
+    private final ByteBuffer mask = BufferUtils.createByteBuffer(16);
+    private final int[] viewport = new int[4];
     private final boolean samplers;
+    private final boolean compatibility;
 
     GlCapture() {
         GLCapabilities caps = GL.getCapabilities();
         samplers = caps.OpenGL33 || caps.GL_ARB_sampler_objects;
+        compatibility = GlRenderer.compatibility(caps);
     }
 
     /**
@@ -103,14 +107,14 @@ final class GlCapture {
         boolean stencil = glIsEnabled(GL_STENCIL_TEST);
         boolean logicOp = glIsEnabled(GL_COLOR_LOGIC_OP);
         boolean offset = glIsEnabled(GL_POLYGON_OFFSET_FILL);
-        int[] viewport = new int[4];
         ints.clear();
         glGetIntegerv(GL_VIEWPORT, ints);
         ints.get(viewport);
         ints.clear();
         glGetIntegerv(GL_POLYGON_MODE, ints);
-        int polygonMode = ints.get(0);
-        ByteBuffer mask = BufferUtils.createByteBuffer(4);
+        int polygonFront = ints.get(0);
+        int polygonBack = ints.get(1);
+        mask.clear();
         glGetBooleanv(GL_COLOR_WRITEMASK, mask);
         try {
             if (w != width || h != height) {
@@ -171,7 +175,7 @@ final class GlCapture {
             glActiveTexture(activeTexture);
             glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
             glColorMask(mask.get(0) != 0, mask.get(1) != 0, mask.get(2) != 0, mask.get(3) != 0);
-            glPolygonMode(GL_FRONT_AND_BACK, polygonMode);
+            GlRenderer.restorePolygonMode(compatibility, polygonFront, polygonBack);
             toggle(GL_SCISSOR_TEST, scissor);
             toggle(GL_BLEND, blend);
             toggle(GL_DEPTH_TEST, depth);
