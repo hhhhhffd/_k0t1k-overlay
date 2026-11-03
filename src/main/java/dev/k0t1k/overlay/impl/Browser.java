@@ -408,8 +408,18 @@ final class Browser {
     /** Pixels of the browser's newest frame, for the renderer. */
     static final class Frame {
         ByteBuffer pixels = ByteBuffer.allocateDirect(4);
-        final int[] size = new int[2];
+        /** Width, height, and the rows {@code [top, bottom)} the last copy changed. */
+        final int[] size = new int[4];
         long version;
+        /** The picture's {@code Batch.imageVersion}, or -1 before there is one. */
+        long key = -1;
+        /**
+         * The key of the picture this one differs from only in the rows {@code [dirtyTop, dirtyBottom)},
+         * so a renderer that holds that picture uploads just those; -1 when the whole picture is new.
+         */
+        long baseKey = -1;
+        int dirtyTop;
+        int dirtyBottom;
         /** What the icon rows below the page hold: the page size and {@code Favicons.stamp} they were laid out for. */
         int iconWidth;
         int iconHeight;

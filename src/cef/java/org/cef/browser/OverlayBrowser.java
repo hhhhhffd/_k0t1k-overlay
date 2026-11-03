@@ -35,6 +35,13 @@ public final class OverlayBrowser extends CefBrowser_N implements CefRenderHandl
     private int pixelsWidth;
     private int pixelsHeight;
     private long version;
+    /** Rows of {@link #pixels} painted since the last {@link #copyFrame}, {@code [top, bottom)}; empty when equal. */
+    private int dirtyTop;
+    private int dirtyBottom;
+    /** The version {@link #copyFrame} last handed out, and the size it had. */
+    private long delivered;
+    private int deliveredWidth;
+    private int deliveredHeight;
     private boolean created;
     private boolean settingFocus;
 
@@ -72,25 +79,49 @@ public final class OverlayBrowser extends CefBrowser_N implements CefRenderHandl
 
     /**
      * Copies the newest frame into {@code out} if it is newer than {@code seen} and returns its version.
-     * Always fills {@code size}; returns -1 when {@code out} is too small for it.
+     * Fills {@code size} with the width and height, and {@code size[2..3]} with the rows of {@code out}
+     * that were written, {@code [top, bottom)}. When {@code out} already holds the frame handed out last
+     * ({@code seen} is its version) only the rows painted since are copied. Returns -1 when {@code out}
+     * is too small for the frame.
      */
     public long copyFrame(long seen, ByteBuffer out, int[] size) {
         synchronized (lock) {
             if (pixels == null || version == seen) {
                 return seen;
             }
-            size[0] = pixelsWidth;
-            size[1] = pixelsHeight;
+            int w = pixelsWidth;
+            int h = pixelsHeight;
+            size[0] = w;
+            size[1] = h;
             if (out.capacity() < pixels.limit()) {
                 return -1;
             }
-            pixels.rewind();
-            out.clear();
-            out.put(pixels);
-            out.flip();
-            pixels.rewind();
+            boolean partial = seen != 0 && seen == delivered && w == deliveredWidth && h == deliveredHeight;
+            int top = partial ? dirtyTop : 0;
+            int bottom = partial ? dirtyBottom : h;
+            copyRows(pixels, out, w, top, bottom);
+            out.position(0).limit(w * h * 4);
+            size[2] = top;
+            size[3] = bottom;
+            dirtyTop = dirtyBottom = 0;
+            delivered = version;
+            deliveredWidth = w;
+            deliveredHeight = h;
             return version;
         }
+    }
+
+    /** Copies whole rows {@code [top, bottom)} of a {@code w} pixels wide BGRA picture; positions are left alone. */
+    private static void copyRows(ByteBuffer from, ByteBuffer to, int w, int top, int bottom) {
+        if (bottom <= top) {
+            return;
+        }
+        ByteBuffer source = from.duplicate();
+        source.limit(bottom * w * 4).position(top * w * 4);
+        ByteBuffer target = to.duplicate();
+        target.clear();
+        target.position(top * w * 4);
+        target.put(source);
     }
 
     public void mouse(int id, int x, int y, int modifiers, int clicks, int button) {
@@ -286,19 +317,37 @@ public final class OverlayBrowser extends CefBrowser_N implements CefRenderHandl
         if (popup) {
             return;
         }
+        int bytes = w * h * 4;
+        if (buffer.capacity() < bytes) {
+            return; // not a whole frame; never seen, but a short copy would leave stale rows
+        }
         synchronized (lock) {
-            int bytes = w * h * 4;
+            boolean sameSize = pixels != null && w == pixelsWidth && h == pixelsHeight;
             if (pixels == null || pixels.capacity() < bytes) {
                 pixels = ByteBuffer.allocateDirect(bytes);
             }
-            pixels.clear();
-            ByteBuffer source = buffer.duplicate();
-            source.rewind();
-            source.limit(Math.min(source.capacity(), bytes));
-            pixels.put(source);
-            pixels.flip();
+            // CEF hands the whole view each time; only the rows its dirty rectangles cover changed.
+            int top = 0;
+            int bottom = h;
+            if (sameSize && dirty != null && dirty.length > 0) {
+                top = h;
+                bottom = 0;
+                for (Rectangle r : dirty) {
+                    top = Math.min(top, Math.max(0, r.y));
+                    bottom = Math.max(bottom, Math.min(h, r.y + r.height));
+                }
+            }
+            copyRows(buffer, pixels, w, top, bottom);
+            pixels.position(0).limit(bytes);
             pixelsWidth = w;
             pixelsHeight = h;
+            if (!sameSize || dirtyBottom <= dirtyTop) {
+                dirtyTop = sameSize ? top : 0;
+                dirtyBottom = sameSize ? bottom : h;
+            } else if (bottom > top) {
+                dirtyTop = Math.min(dirtyTop, top);
+                dirtyBottom = Math.max(dirtyBottom, bottom);
+            }
             version++;
         }
     }

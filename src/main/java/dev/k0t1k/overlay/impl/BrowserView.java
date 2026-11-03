@@ -219,8 +219,10 @@ final class BrowserView {
             batch.image = frame.pixels;
             batch.imageWidth = frame.size[0];
             batch.imageHeight = frame.size[1] + Batch.ICON_ROWS;
-            // Frame versions count per engine; the tab id keeps a switch from looking like an unchanged picture.
-            batch.imageVersion = ((long) tab.id << 48) + ((long) frame.iconStamp << 32) + frame.version;
+            batch.imageVersion = frame.key;
+            batch.imageBase = frame.baseKey;
+            batch.imageDirtyTop = frame.dirtyTop;
+            batch.imageDirtyBottom = frame.dirtyBottom;
             // CEF rounds the view up to whole device independent pixels, so the frame can be a little
             // larger than the area (the clip trims it) or, while resizing, smaller.
             batch.pushClip(pixelX, pixelY, pixelW, pixelH);
@@ -264,24 +266,34 @@ final class BrowserView {
             // A bookmark has an icon from its first start, before its site was ever opened.
             favicons.page(host, "", false);
         }
+        // Only the shown tab keeps a copy of its page; the others get theirs back in full when selected.
+        for (Tab t : tabs) {
+            if (t != tab) {
+                releaseFrame(t.frame);
+            }
+        }
         Browser.Frame frame = tab.frame;
         long version = engine.frame(frame.version, frame.pixels, frame.size);
         int needed = frame.size[0] * (frame.size[1] + Batch.ICON_ROWS) * 4;
-        if (frame.size[0] > 0 && frame.pixels.capacity() < needed) {
+        // Also shrinks a buffer left large by a bigger page, so a smaller view does not keep the memory.
+        if (frame.size[0] > 0 && (frame.pixels.capacity() < needed || frame.pixels.capacity() > needed * 2L)) {
             frame.pixels = java.nio.ByteBuffer.allocateDirect(needed);
             frame.iconWidth = 0;
             version = engine.frame(0, frame.pixels, frame.size);
         }
+        boolean pageChanged = version > 0 && version != frame.version;
         if (version > 0) {
             frame.version = version;
         }
         int w = frame.size[0];
         int h = frame.size[1];
         if (frame.version == 0 || w < Favicons.CELL) {
+            updateKey(tab, frame, pageChanged, false);
             return;
         }
         int stamp = favicons.stamp();
         int perRow = w / Favicons.CELL;
+        boolean iconsChanged = false;
         if (frame.iconWidth != w || frame.iconHeight != h || frame.iconStamp != stamp) {
             frame.iconCount = Math.min(favicons.count(), perRow * Batch.ICON_ROWS / Favicons.CELL);
             java.nio.ByteBuffer bytes = frame.pixels.duplicate();
@@ -299,8 +311,53 @@ final class BrowserView {
             frame.iconWidth = w;
             frame.iconHeight = h;
             frame.iconStamp = stamp;
+            iconsChanged = true;
         }
+        updateKey(tab, frame, pageChanged, iconsChanged);
         iconFrame = frame;
+    }
+
+    /**
+     * Gives the frame's picture a new key when the page or the icon rows changed, and records which rows
+     * changed since the previous key, so the renderer can upload only those.
+     */
+    private static void updateKey(Tab tab, Browser.Frame frame, boolean pageChanged, boolean iconsChanged) {
+        if (frame.version == 0) {
+            frame.key = frame.baseKey = -1;
+            return;
+        }
+        // Frame versions count per engine; the tab id keeps a switch from looking like an unchanged picture.
+        long key = ((long) tab.id << 48) + ((long) frame.iconStamp << 32) + frame.version;
+        if (key == frame.key) {
+            return;
+        }
+        int h = frame.size[1];
+        int top = Integer.MAX_VALUE;
+        int bottom = 0;
+        if (pageChanged && frame.size[3] > frame.size[2]) {
+            top = frame.size[2];
+            bottom = frame.size[3];
+        }
+        if (iconsChanged) {
+            top = Math.min(top, h);
+            bottom = h + Batch.ICON_ROWS;
+        }
+        frame.baseKey = frame.key;
+        frame.dirtyTop = Math.min(top, bottom);
+        frame.dirtyBottom = bottom;
+        frame.key = key;
+    }
+
+    /** Frees a hidden tab's copy of its page; selecting the tab again copies the page anew. */
+    private static void releaseFrame(Browser.Frame frame) {
+        if (frame.pixels.capacity() <= 4) {
+            return;
+        }
+        frame.pixels = java.nio.ByteBuffer.allocateDirect(4);
+        frame.version = 0;
+        frame.key = frame.baseKey = -1;
+        frame.iconWidth = frame.iconHeight = 0;
+        frame.iconCount = 0;
     }
 
     /** Draws the host's icon in a square, or returns false (nothing drawn) when it has none yet. */

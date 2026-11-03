@@ -250,15 +250,24 @@ final class GlRenderer {
                 if (samplers) {
                     org.lwjgl.opengl.GL33.glBindSampler(1, 0);
                 }
+                int w = batch.imageWidth;
+                int h = batch.imageHeight;
                 ByteBuffer pixels = batch.image.duplicate();
-                pixels.position(0).limit(batch.imageWidth * batch.imageHeight * 4);
-                if (batch.imageWidth != imageTextureWidth || batch.imageHeight != imageTextureHeight) {
+                if (w != imageTextureWidth || h != imageTextureHeight) {
                     // New storage only for a new size; otherwise the pixels go into the existing one.
-                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, batch.imageWidth, batch.imageHeight, 0, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
-                    imageTextureWidth = batch.imageWidth;
-                    imageTextureHeight = batch.imageHeight;
+                    pixels.position(0).limit(w * h * 4);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
+                    imageTextureWidth = w;
+                    imageTextureHeight = h;
                 } else {
-                    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, batch.imageWidth, batch.imageHeight, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
+                    // The texture holds the base picture: only the rows that changed since go up.
+                    boolean partial = batch.imageBase != -1 && batch.imageBase == imageVersion;
+                    int top = partial ? Math.max(0, batch.imageDirtyTop) : 0;
+                    int bottom = partial ? Math.min(h, batch.imageDirtyBottom) : h;
+                    if (bottom > top) {
+                        pixels.limit(bottom * w * 4).position(top * w * 4);
+                        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, top, w, bottom - top, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
+                    }
                 }
                 imageVersion = batch.imageVersion;
                 glActiveTexture(GL_TEXTURE0);

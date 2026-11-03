@@ -54,7 +54,9 @@ public interface BrowserEngine {
 
     /**
      * Copies the newest frame (BGRA, top-down rows) into {@code out} when it is newer than
-     * {@code seen}; fills {@code size} with its width and height and returns its version.
+     * {@code seen}; fills {@code size} with its width and height, and {@code size[2..3]} with the rows
+     * of {@code out} that changed, {@code [top, bottom)}, and returns its version. With {@code seen} 0
+     * the whole frame is copied.
      */
     long frame(long seen, ByteBuffer out, int[] size);
 

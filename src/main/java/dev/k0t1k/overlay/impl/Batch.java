@@ -58,6 +58,13 @@ final class Batch {
     int imageWidth;
     int imageHeight;
     long imageVersion;
+    /**
+     * The version the image differs from only in rows {@code [imageDirtyTop, imageDirtyBottom)}: a
+     * renderer holding that version uploads those rows alone. -1 when the whole image must be uploaded.
+     */
+    long imageBase = -1;
+    int imageDirtyTop;
+    int imageDirtyBottom;
 
     void begin(int width, int height) {
         this.width = width;
