@@ -20,6 +20,16 @@ final class StbFont extends Font {
     private final IntBuffer b = ints();
     private final IntBuffer c = ints();
     private final IntBuffer d = ints();
+    /**
+     * Small direct-mapped caches in front of stb, which every glyph drawn or measured asks each frame:
+     * a codepoint lookup and a kerning pair (Inter keeps its kerning in GPOS, a slow walk) each cost
+     * about a hundred nanoseconds through JNI. A slot holds its key (-1 when empty) and the answer.
+     */
+    private static final int CACHE = 4096;
+    private final long[] hasKeys = emptyKeys();
+    private final boolean[] hasValues = new boolean[CACHE];
+    private final long[] kernKeys = emptyKeys();
+    private final int[] kernValues = new int[CACHE];
 
     StbFont(String resource, Atlas atlas) throws IOException {
         super(atlas);
@@ -39,8 +49,19 @@ final class StbFont extends Font {
         return ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder()).asIntBuffer();
     }
 
+    private static long[] emptyKeys() {
+        long[] keys = new long[CACHE];
+        java.util.Arrays.fill(keys, -1);
+        return keys;
+    }
+
+    private static int slot(long key) {
+        return (int) ((key * 0x9E3779B97F4A7C15L) >>> 52) & (CACHE - 1);
+    }
+
+    /** {@code stbtt_ScaleForPixelHeight}, computed here from the same vertical metrics. */
     private float scale(float px) {
-        return stbtt_ScaleForPixelHeight(info, px);
+        return px / (ascent - descent);
     }
 
     @Override
@@ -55,7 +76,12 @@ final class StbFont extends Font {
 
     @Override
     boolean has(int codepoint) {
-        return stbtt_FindGlyphIndex(info, codepoint) != 0;
+        int i = slot(codepoint);
+        if (hasKeys[i] != codepoint) {
+            hasValues[i] = stbtt_FindGlyphIndex(info, codepoint) != 0;
+            hasKeys[i] = codepoint;
+        }
+        return hasValues[i];
     }
 
     @Override
@@ -79,6 +105,13 @@ final class StbFont extends Font {
 
     @Override
     float kern(int left, int right, float px) {
-        return stbtt_GetCodepointKernAdvance(info, left, right) * scale(px);
+        // Codepoints fit in 21 bits, so the pair packs into one non-negative key.
+        long key = ((long) left << 21) | (right & 0x1fffff);
+        int i = slot(key);
+        if (kernKeys[i] != key) {
+            kernValues[i] = stbtt_GetCodepointKernAdvance(info, left, right);
+            kernKeys[i] = key;
+        }
+        return kernValues[i] * scale(px);
     }
 }

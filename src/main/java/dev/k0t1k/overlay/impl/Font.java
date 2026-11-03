@@ -13,6 +13,10 @@ import java.util.Map;
 abstract class Font {
     private final Atlas atlas;
     private final Map<Long, Glyph> glyphs = new HashMap<>();
+    /** A direct-mapped cache in front of {@link #glyphs}, so a hit allocates no boxed key. */
+    private static final int RECENT = 1024;
+    private final long[] recentKeys = new long[RECENT];
+    private final Glyph[] recent = new Glyph[RECENT];
     private int generation;
 
     static final class Glyph {
@@ -101,15 +105,22 @@ abstract class Font {
     final Glyph glyph(int codepoint, float px) {
         if (generation != atlas.generation) {
             glyphs.clear();
+            java.util.Arrays.fill(recent, null);
             generation = atlas.generation;
         }
         int size = Math.round(px * 4); // quarter-pixel buckets
         long key = ((long) size << 32) | (codepoint & 0xffffffffL);
+        int slot = (int) ((key * 0x9E3779B97F4A7C15L) >>> 54) & (RECENT - 1);
+        if (recent[slot] != null && recentKeys[slot] == key) {
+            return recent[slot];
+        }
         Glyph glyph = glyphs.get(key);
         if (glyph == null) {
             glyph = rasterise(codepoint, size / 4f);
             glyphs.put(key, glyph);
         }
+        recentKeys[slot] = key;
+        recent[slot] = glyph;
         return glyph;
     }
 
