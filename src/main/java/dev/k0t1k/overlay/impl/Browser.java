@@ -163,6 +163,10 @@ final class Browser {
         if (!intact(api, API_SHA256)) {
             download("jcef-api", API_SHA256, api, 0, 0.02f);
         }
+        if (installed()) {
+            progress = 1;
+            return; // only the API jar was missing or damaged
+        }
         Path nativeJar = root.resolve("natives-download.jar");
         download("jcef-natives-" + platform[0], platform[1], nativeJar, 0.02f, 0.8f);
         Path unpacking = root.resolve("cef-unpacking");
