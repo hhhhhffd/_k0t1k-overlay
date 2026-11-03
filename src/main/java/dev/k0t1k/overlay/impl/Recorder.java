@@ -313,6 +313,14 @@ final class Recorder {
                 io.execute(() -> stopSession(stopping));
             }
         } else if (session == null && wanted && bufferBlockedBy == null) {
+            // The session records the settings as they are now; the throttled signature must match them,
+            // or the new buffer would look outdated at once and be restarted.
+            String signature = signature();
+            if (!signature.equals(bufferSignature)) {
+                bufferSignature = signature;
+                signatureChangedAt = now;
+            }
+            signatureCheckedAt = now;
             buffer = new Session(true);
         }
     }
