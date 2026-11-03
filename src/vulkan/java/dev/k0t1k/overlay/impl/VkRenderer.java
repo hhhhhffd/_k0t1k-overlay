@@ -1093,6 +1093,13 @@ final class VkRenderer implements VulkanBackend {
                     vkDestroyImage(vk, retired[0], null);
                     vkFreeMemory(vk, retired[2], null);
                     retiredPages.remove(r);
+                    // The driver may hand the freed handle to the next view: a set still naming it must
+                    // count as unbound, or the rebind check would mistake the old view for the new one.
+                    for (int i = 0; i < FRAMES; i++) {
+                        if (boundPage[i] == retired[1]) {
+                            boundPage[i] = 0;
+                        }
+                    }
                 }
             }
         }
