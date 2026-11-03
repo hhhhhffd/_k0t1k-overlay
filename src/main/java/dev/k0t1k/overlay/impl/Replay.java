@@ -127,6 +127,16 @@ final class Replay {
                 }
             } catch (IOException e) {
                 onError.accept(e);
+            } finally {
+                // Without the guard the folder stays behind, but its lock must not outlive the buffer.
+                if (lock != null) {
+                    try {
+                        lock.close();
+                    } catch (IOException e) {
+                        onError.accept(e);
+                    }
+                    lock = null;
+                }
             }
         }
     }
