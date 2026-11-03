@@ -112,20 +112,22 @@ final class Replay {
         }
         Path own = folder;
         folder = null;
-        try {
-            if (own != null) {
-                deleteTree(own);
-            }
-        } catch (IOException e) {
-            onError.accept(e);
-        }
-        if (lock != null) {
-            try {
-                lock.close();
+        // The lock file must be closed before the folder is deleted: Windows cannot remove a folder that
+        // holds an open file. The root guard keeps another game's cleanup out meanwhile, so the folder
+        // whose lock just went free is not taken for an abandoned one half-way through the delete.
+        synchronized (GUARD) {
+            try (FileChannel guard = FileChannel.open(root.resolve(GUARD_FILE), StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+                guard.lock();
+                if (lock != null) {
+                    lock.close();
+                    lock = null;
+                }
+                if (own != null) {
+                    deleteTree(own);
+                }
             } catch (IOException e) {
                 onError.accept(e);
             }
-            lock = null;
         }
     }
 
