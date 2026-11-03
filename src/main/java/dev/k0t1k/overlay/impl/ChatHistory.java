@@ -4,7 +4,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -34,11 +33,18 @@ final class ChatHistory {
     static final String SINGLEPLAYER = "@singleplayer";
     private static final int PAGE = 2000;
     private static final int SEARCH_LIMIT = 2000;
+    /**
+     * Most messages kept in memory: past this (plus a page, so trimming is rare) the oldest are dropped
+     * and read back from the store on demand like any older page.
+     */
+    private static final int MAX_LINES = 5000;
 
     static final class Line {
         final long time;
         final String server;
         final String text;
+        /** Where the line's row starts in the store, or -1 when unknown; set before the line is published. */
+        long start = -1;
 
         Line(long time, String server, String text) {
             this.time = time;
@@ -213,18 +219,30 @@ final class ChatHistory {
                 commit(read);
                 return;
             }
-            StringBuilder out = new StringBuilder();
-            for (Line line : fresh) {
-                out.append(line.time).append('\t').append(escape(line.server)).append('\t')
-                        .append(escape(line.text)).append('\n');
+            byte[][] rows = new byte[fresh.size()][];
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            for (int i = 0; i < rows.length; i++) {
+                Line line = fresh.get(i);
+                rows[i] = (line.time + "\t" + escape(line.server) + "\t" + escape(line.text) + "\n")
+                        .getBytes(StandardCharsets.UTF_8);
+                out.write(rows[i], 0, rows[i].length);
             }
-            // One write per batch: other games sharing the data folder append to the same file.
-            try (OutputStream file = new FileOutputStream(store.toFile(), true)) {
-                file.write(out.toString().getBytes(StandardCharsets.UTF_8));
+            // One write per batch: other games sharing the data folder append to the same file, so the
+            // batch lands in one piece and its rows start where the file ended before it.
+            long end;
+            try (FileOutputStream file = new FileOutputStream(store.toFile(), true)) {
+                file.write(out.toByteArray());
+                end = file.getChannel().position();
+            }
+            long offset = end - out.size();
+            for (int i = 0; i < rows.length; i++) {
+                fresh.get(i).start = offset;
+                offset += rows[i].length;
             }
             commit(read);
             render.execute(() -> {
                 lines.addAll(fresh);
+                trim();
                 version++;
                 for (Line line : fresh) {
                     onNew.accept(line);
@@ -233,6 +251,26 @@ final class ChatHistory {
         } catch (IOException | RuntimeException e) {
             onError.accept(e);
         }
+    }
+
+    /**
+     * Drops the oldest loaded messages once there are too many; they stay in the store and come back as
+     * an older page when the player scrolls up. Not while a page is loading, whose position would no
+     * longer fit, nor when the first kept line's place in the store is unknown.
+     */
+    private void trim() {
+        int drop = lines.size() - MAX_LINES;
+        if (drop <= PAGE || loadingOlder) {
+            return;
+        }
+        long start = lines.get(drop).start;
+        if (start < 0) {
+            return;
+        }
+        lines.subList(0, drop).clear();
+        olderEnd = start;
+        hasOlder = true;
+        prepends++;
     }
 
     /** What one poll read: the lines, and the log state to keep once they are stored. */
@@ -393,6 +431,7 @@ final class ChatHistory {
                 int[] span = spans.get(i);
                 Line line = decode(new String(acc, span[0], span[1] - span[0], StandardCharsets.UTF_8));
                 if (line != null) {
+                    line.start = start + span[0];
                     result.add(line);
                 }
             }
