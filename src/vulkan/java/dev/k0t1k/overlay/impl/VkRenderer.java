@@ -389,13 +389,23 @@ final class VkRenderer implements VulkanBackend {
         private final long setLayout;
         private final long pipelineLayout;
         private final long descriptorPool;
-        private final long descriptorSet;
+        /**
+         * One descriptor set per frame slot, so pointing the page binding at a new image only touches the
+         * set of the slot being recorded, whose previous frame has finished; the others follow on their turn.
+         */
+        private final long[] descriptorSets = new long[FRAMES];
+        /** The view each slot's set has in the page binding. */
+        private final long[] boundPage = new long[FRAMES];
+        /** The index of the last frame submitted in each slot. */
+        private final long[] submittedFrame = new long[FRAMES];
         private final long vertexShader;
         private final long fragmentShader;
         /** Render pass and pipeline per swapchain format. */
         private final Map<Integer, long[]> passes = new HashMap<>();
         private boolean atlasReady;
         private long frame;
+        /** The index of the frame being recorded. */
+        private long current;
 
         /** The batch's image (the browser's page, BGRA); made for its first frame, remade when its size changes. */
         private long pageImage;
@@ -406,6 +416,11 @@ final class VkRenderer implements VulkanBackend {
         private long pageVersion = -1;
         private boolean pageReady;
         private final HostBuffer[] pageStaging = new HostBuffer[FRAMES];
+        /**
+         * Page images replaced by a resize, {image, view, memory, index of the frame that replaced it}:
+         * frames already on the GPU may still sample them, so they are freed once those have finished.
+         */
+        private final java.util.ArrayList<long[]> retiredPages = new java.util.ArrayList<>();
 
         /** Replay: the game's frame scaled down, then read into the slot's buffer. */
         private long captureImage;
@@ -503,22 +518,30 @@ final class VkRenderer implements VulkanBackend {
                 pipelineLayout = out.get(0);
 
                 VkDescriptorPoolSize.Buffer poolSize = VkDescriptorPoolSize.calloc(1, stack);
-                poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(2);
+                poolSize.get(0).type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(2 * FRAMES);
                 VkDescriptorPoolCreateInfo descriptorPoolInfo = VkDescriptorPoolCreateInfo.calloc(stack)
                         .sType(VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO)
-                        .maxSets(1)
+                        .maxSets(FRAMES)
                         .pPoolSizes(poolSize);
                 check(vkCreateDescriptorPool(vk, descriptorPoolInfo, null, out), "vkCreateDescriptorPool");
                 descriptorPool = out.get(0);
+                java.nio.LongBuffer layouts = stack.mallocLong(FRAMES);
+                for (int i = 0; i < FRAMES; i++) {
+                    layouts.put(i, setLayout);
+                }
                 VkDescriptorSetAllocateInfo setInfo = VkDescriptorSetAllocateInfo.calloc(stack)
                         .sType(VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO)
                         .descriptorPool(descriptorPool)
-                        .pSetLayouts(stack.longs(setLayout));
-                check(vkAllocateDescriptorSets(vk, setInfo, out), "vkAllocateDescriptorSets");
-                descriptorSet = out.get(0);
-                bind(0, atlasView);
-                // The image binding must hold something valid before the first page arrives.
-                bind(1, atlasView);
+                        .pSetLayouts(layouts);
+                java.nio.LongBuffer sets = stack.mallocLong(FRAMES);
+                check(vkAllocateDescriptorSets(vk, setInfo, sets), "vkAllocateDescriptorSets");
+                for (int i = 0; i < FRAMES; i++) {
+                    descriptorSets[i] = sets.get(i);
+                    bind(descriptorSets[i], 0, atlasView);
+                    // The image binding must hold something valid before the first page arrives.
+                    bind(descriptorSets[i], 1, atlasView);
+                    boundPage[i] = atlasView;
+                }
 
                 vertexShader = shader(stack, "overlay.vert.spv");
                 fragmentShader = shader(stack, "overlay.frag.spv");
@@ -600,8 +623,8 @@ final class VkRenderer implements VulkanBackend {
             }
         }
 
-        /** Points a sampler binding of the descriptor set at a view; the set must not be in use by the GPU. */
-        private void bind(int binding, long view) {
+        /** Points a sampler binding of a descriptor set at a view; the set must not be in use by the GPU. */
+        private void bind(long set, int binding, long view) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 VkDescriptorImageInfo.Buffer imageDescriptor = VkDescriptorImageInfo.calloc(1, stack);
                 imageDescriptor.get(0)
@@ -611,7 +634,7 @@ final class VkRenderer implements VulkanBackend {
                 VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack);
                 write.get(0)
                         .sType(VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET)
-                        .dstSet(descriptorSet)
+                        .dstSet(set)
                         .dstBinding(binding)
                         .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
                         .descriptorCount(1)
@@ -825,9 +848,11 @@ final class VkRenderer implements VulkanBackend {
          * present was rewired.
          */
         boolean draw(VkQueue queue, Swapchain swapchain, int image, VkPresentInfoKHR present, Batch batch, long captureTime) {
-            int slot = (int) (frame++ % FRAMES);
+            current = frame++;
+            int slot = (int) (current % FRAMES);
             waitSlot(slot);
             collect(slot);
+            freeRetiredPages();
             if (captureTime != 0 && !prepareCapture(swapchain, slot)) {
                 captureTime = 0;
                 if (batch == null) {
@@ -870,6 +895,7 @@ final class VkRenderer implements VulkanBackend {
                 check(vkResetFences(vk, stack.longs(fences[slot])), "vkResetFences");
                 check(vkQueueSubmit(queue, submit, fences[slot]), "vkQueueSubmit");
                 submitted[slot] = true;
+                submittedFrame[slot] = current;
                 // Persistent memory: the present reads it after this hook has returned.
                 swapchain.waits[image].put(0, swapchain.done[image]);
                 present.pWaitSemaphores(swapchain.waits[image]);
@@ -895,6 +921,11 @@ final class VkRenderer implements VulkanBackend {
             if (batch.image != null && batch.imageVersion != pageVersion) {
                 uploadPage(stack, cmd, batch, slot);
             }
+            long page = pageView != 0 ? pageView : atlasView;
+            if (boundPage[slot] != page) {
+                bind(descriptorSets[slot], 1, page);
+                boundPage[slot] = page;
+            }
             VkClearValue.Buffer noClear = VkClearValue.calloc(1, stack);
             VkRenderPassBeginInfo passBegin = VkRenderPassBeginInfo.calloc(stack)
                     .sType(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO)
@@ -910,7 +941,7 @@ final class VkRenderer implements VulkanBackend {
             vkCmdBindVertexBuffers(cmd, 0, stack.longs(vertices[slot].buffer), stack.longs(0));
             vkCmdBindIndexBuffer(cmd, indices.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0,
-                    stack.longs(descriptorSet), null);
+                    stack.longs(descriptorSets[slot]), null);
             ByteBuffer constants = stack.malloc(16);
             constants.putFloat(0, swapchain.width).putFloat(4, swapchain.height)
                     .putFloat(8, srgb(swapchain.format) ? 1 : 0).putFloat(12, 0);
@@ -996,9 +1027,11 @@ final class VkRenderer implements VulkanBackend {
                 return;
             }
             if (w != pageWidth || h != pageHeight) {
-                // Frames still on the GPU sample the old image through the descriptor set being rewritten.
-                waitIdleFrames();
-                destroyPage();
+                // Frames still on the GPU may sample the old image: it is retired, not waited for. Each
+                // slot's descriptor set moves to the new image when that slot is recorded next.
+                if (pageImage != 0) {
+                    retiredPages.add(new long[] {pageImage, pageView, pageMemory, current});
+                }
                 long[] page = image(VK_FORMAT_B8G8R8A8_UNORM, w, h, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
                 pageImage = page[0];
                 pageMemory = page[1];
@@ -1006,9 +1039,17 @@ final class VkRenderer implements VulkanBackend {
                 pageWidth = w;
                 pageHeight = h;
                 pageReady = false;
-                bind(1, pageView);
+            }
+            // An image holding the base picture needs only the rows that changed since.
+            boolean partial = pageReady && batch.imageBase != -1 && batch.imageBase == pageVersion;
+            int top = partial ? Math.max(0, batch.imageDirtyTop) : 0;
+            int bottom = partial ? Math.min(h, batch.imageDirtyBottom) : h;
+            if (bottom <= top) {
+                pageVersion = batch.imageVersion;
+                return;
             }
             long bytes = (long) w * h * 4;
+            long offset = (long) top * w * 4;
             // This slot's staging buffer is free: its last frame finished before draw went on.
             if (pageStaging[slot] == null || pageStaging[slot].size < bytes) {
                 if (pageStaging[slot] != null) {
@@ -1016,21 +1057,44 @@ final class VkRenderer implements VulkanBackend {
                 }
                 pageStaging[slot] = new HostBuffer(this, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             }
-            MemoryUtil.memCopy(memAddress(batch.image, 0), memAddress(pageStaging[slot].mapped, 0), bytes);
+            MemoryUtil.memCopy(memAddress(batch.image, 0) + offset, memAddress(pageStaging[slot].mapped, 0) + offset,
+                    (long) (bottom - top) * w * 4);
 
             barrier(stack, cmd, pageImage, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                     pageReady ? VK_ACCESS_SHADER_READ_BIT : 0, VK_ACCESS_TRANSFER_WRITE_BIT,
                     pageReady ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
             VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
+            region.get(0).bufferOffset(offset);
             region.get(0).imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1);
-            region.get(0).imageExtent().set(w, h, 1);
+            region.get(0).imageOffset().set(0, top, 0);
+            region.get(0).imageExtent().set(w, bottom - top, 1);
             vkCmdCopyBufferToImage(cmd, pageStaging[slot].buffer, pageImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
             barrier(stack, cmd, pageImage, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                     VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             pageReady = true;
             pageVersion = batch.imageVersion;
+        }
+
+        /**
+         * Frees the retired page images no frame on the GPU can still use: every submission made before
+         * the one that retired an image has finished. Never waits.
+         */
+        private void freeRetiredPages() {
+            for (int r = retiredPages.size() - 1; r >= 0; r--) {
+                long[] retired = retiredPages.get(r);
+                boolean free = true;
+                for (int i = 0; i < FRAMES && free; i++) {
+                    free = !submitted[i] || submittedFrame[i] >= retired[3] || vkGetFenceStatus(vk, fences[i]) == VK_SUCCESS;
+                }
+                if (free) {
+                    vkDestroyImageView(vk, retired[1], null);
+                    vkDestroyImage(vk, retired[0], null);
+                    vkFreeMemory(vk, retired[2], null);
+                    retiredPages.remove(r);
+                }
+            }
         }
 
         private void destroyPage() {
@@ -1227,6 +1291,13 @@ final class VkRenderer implements VulkanBackend {
             vkDestroyDescriptorSetLayout(vk, setLayout, null);
             vkDestroySampler(vk, sampler, null);
             destroyPage();
+            // The device is idle here, so the retired images are free to go as well.
+            for (long[] retired : retiredPages) {
+                vkDestroyImageView(vk, retired[1], null);
+                vkDestroyImage(vk, retired[0], null);
+                vkFreeMemory(vk, retired[2], null);
+            }
+            retiredPages.clear();
             destroyCapture();
             vkDestroyImageView(vk, atlasView, null);
             vkDestroyImage(vk, atlasImage, null);
