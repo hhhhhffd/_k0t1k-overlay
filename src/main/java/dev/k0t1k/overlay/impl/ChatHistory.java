@@ -69,6 +69,8 @@ final class ChatHistory {
     int prepends;
     boolean hasOlder;
     boolean loadingOlder;
+    /** The chat view is scrolled up, reading older messages; set by the view on the render thread. */
+    boolean readingOlder;
     private boolean loaded;
     private long olderEnd;
     private volatile int searchGeneration;
@@ -229,12 +231,18 @@ final class ChatHistory {
             }
             // One write per batch: other games sharing the data folder append to the same file, so the
             // batch lands in one piece and its rows start where the file ended before it.
-            long end;
+            long offset;
             try (FileOutputStream file = new FileOutputStream(store.toFile(), true)) {
-                file.write(out.toByteArray());
-                end = file.getChannel().position();
+                // A lock on one byte far past the end serialises the games' appends without blocking
+                // their reads (Windows locks are mandatory), so the size read here is where the batch lands.
+                java.nio.channels.FileLock append = file.getChannel().lock(Long.MAX_VALUE - 1, 1, false);
+                try {
+                    offset = file.getChannel().size();
+                    file.write(out.toByteArray());
+                } finally {
+                    append.release();
+                }
             }
-            long offset = end - out.size();
             for (int i = 0; i < rows.length; i++) {
                 fresh.get(i).start = offset;
                 offset += rows[i].length;
@@ -260,7 +268,8 @@ final class ChatHistory {
      */
     private void trim() {
         int drop = lines.size() - MAX_LINES;
-        if (drop <= PAGE || loadingOlder) {
+        // A player reading older messages keeps them, up to a hard limit.
+        if (drop <= PAGE || loadingOlder || readingOlder && lines.size() < MAX_LINES * 3) {
             return;
         }
         long start = lines.get(drop).start;

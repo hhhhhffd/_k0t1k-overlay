@@ -117,6 +117,7 @@ final class ChatView {
         scroll += ui.takeScroll(x, listY, w, listH) * lh * 3;
         float maxScroll = Math.max(0, total - innerH);
         scroll = Math.max(0, Math.min(scroll, maxScroll));
+        history.readingOlder = scroll > 0;
 
         // Content shorter than the view sits at the top; otherwise the bottom follows scroll.
         float viewTop = total <= innerH ? 0 : total - innerH - scroll;
