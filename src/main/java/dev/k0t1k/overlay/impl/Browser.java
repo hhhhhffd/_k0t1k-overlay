@@ -68,7 +68,7 @@ final class Browser {
         if (platform == null) {
             state = State.UNSUPPORTED;
         } else {
-            state = Files.exists(natives.resolve(".installed")) ? State.STARTING : State.MISSING;
+            state = installed() ? State.STARTING : State.MISSING;
         }
     }
 
@@ -124,12 +124,13 @@ final class Browser {
         }
         busy = true;
         protection.start();
-        boolean install = !Files.exists(natives.resolve(".installed"));
-        state = install ? State.INSTALLING : State.STARTING;
+        state = installed() ? State.STARTING : State.INSTALLING;
         progress = 0;
         io.execute(() -> {
             try {
-                if (install) {
+                // The API jar is checked here, off the render thread: a damaged one is downloaded again.
+                if (!installed() || !intact(root.resolve("jcef-api.jar"), API_SHA256)) {
+                    state = State.INSTALLING;
                     install();
                 }
                 state = State.STARTING;
@@ -159,7 +160,7 @@ final class Browser {
     private void install() throws IOException {
         Files.createDirectories(root);
         Path api = root.resolve("jcef-api.jar");
-        if (!Files.exists(api)) {
+        if (!intact(api, API_SHA256)) {
             download("jcef-api", API_SHA256, api, 0, 0.02f);
         }
         Path nativeJar = root.resolve("natives-download.jar");
@@ -173,6 +174,38 @@ final class Browser {
         Files.delete(nativeJar);
         Files.write(natives.resolve(".installed"), VERSION.getBytes(StandardCharsets.UTF_8));
         progress = 1;
+    }
+
+    /**
+     * Whether the natives of exactly this JCEF version were unpacked: the marker is written last and
+     * holds the version, so an interrupted install or one of another version does not count.
+     */
+    private boolean installed() {
+        Path marker = natives.resolve(".installed");
+        if (!Files.exists(marker)) {
+            return false;
+        }
+        try {
+            return VERSION.equals(new String(Files.readAllBytes(marker), StandardCharsets.UTF_8).trim());
+        } catch (IOException e) {
+            System.err.println("[k0t1k-overlay] browser: cannot read " + marker + " (" + e + "), installing again");
+            return false;
+        }
+    }
+
+    /** Whether {@code file} exists and has the pinned SHA-256. */
+    private static boolean intact(Path file, String sha256) throws IOException {
+        if (!Files.exists(file)) {
+            return false;
+        }
+        MessageDigest digest = sha256();
+        try (InputStream in = new DigestInputStream(new BufferedInputStream(Files.newInputStream(file)), digest)) {
+            byte[] buffer = new byte[1 << 16];
+            while (in.read(buffer) > 0) {
+                // Reading feeds the digest.
+            }
+        }
+        return hex(digest.digest()).equals(sha256);
     }
 
     /** Downloads one Maven Central jar of this JCEF version and checks its SHA-256. */
