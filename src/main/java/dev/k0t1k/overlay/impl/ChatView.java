@@ -29,6 +29,9 @@ final class ChatView {
     private String activeQuery = "";
     private boolean searching;
     private List<ChatHistory.Line> results;
+    private long activeMatchStart = -1;
+    private long pendingMatchStart = -1;
+    private ChatHistory.Line pendingMatchLine;
 
     /** 0 everything, 1 mentions of the player, 2 private messages. */
     private int filter;
@@ -44,6 +47,10 @@ final class ChatView {
     private int filteredVersion = -1;
     private int filteredSize = -1;
     private String filteredKey = "";
+    private List<ChatHistory.Line> searchFiltered;
+    private List<ChatHistory.Line> searchFilteredBase;
+    private int searchFilteredSize = -1;
+    private String searchFilteredKey = "";
 
     /** Distance of the view's bottom from the bottom of the content; 0 follows new messages. */
     private float scroll;
@@ -81,6 +88,7 @@ final class ChatView {
         updateSearch();
 
         float barH = 34;
+        float toolbarH = searching || results != null ? barH * 2 : barH;
         float searchW = Math.min(300, w * 0.3f);
         ui.field(search, x, y, searchW, barH, false, strings.get("chat.search"));
         float playerW = Math.min(170, w * 0.17f);
@@ -95,14 +103,44 @@ final class ChatView {
             }
             fx += pw + 4;
         }
-        String status = results != null || searching
-                ? (searching ? strings.get("chat.searching") : strings.format("chat.found", results.size()))
-                : strings.format("chat.count", history.lines.size()) + " · " + strings.get("chat.copyHint");
-        ui.textFit(ui.regular, 12, fx + 10, y + (barH - ui.lineHeight(ui.regular, 12)) / 2,
-                x + w - fx - 10, Ui.FAINT, status);
+        List<ChatHistory.Line> matches = visibleMatches();
+        if (results != null) {
+            if (matches.isEmpty()) {
+                activeMatchStart = -1;
+                pendingMatchStart = -1;
+                pendingMatchLine = null;
+                history.retainingForSearch = false;
+            } else if (!containsStart(matches, activeMatchStart)) {
+                selectMatch(matches.get(matches.size() - 1));
+            }
+        }
+        if (searching || results != null) {
+            float controlsX = x + 12;
+            if (!matches.isEmpty()) {
+                String previous = strings.get("chat.previousMatch");
+                float previousW = ui.measure(ui.bold, 13, previous) + 20;
+                if (ui.pill(controlsX, y + barH + 2, previousW, barH - 4, previous, false)) {
+                    navigateMatch(-1, matches);
+                }
+                controlsX += previousW + 4;
+                String next = strings.get("chat.nextMatch");
+                float nextW = ui.measure(ui.bold, 13, next) + 20;
+                if (ui.pill(controlsX, y + barH + 2, nextW, barH - 4, next, false)) {
+                    navigateMatch(1, matches);
+                }
+                controlsX += nextW + 8;
+            }
+            String status = searching ? strings.get("chat.searching") : strings.format("chat.found", matches.size());
+            ui.textFit(ui.regular, 12, controlsX, y + barH + (barH - ui.lineHeight(ui.regular, 12)) / 2,
+                    x + w - controlsX - 12, Ui.FAINT, status);
+        } else {
+            String status = strings.format("chat.count", history.lines.size()) + " · " + strings.get("chat.copyHint");
+            ui.textFit(ui.regular, 12, fx + 10, y + (barH - ui.lineHeight(ui.regular, 12)) / 2,
+                    x + w - fx - 10, Ui.FAINT, status);
+        }
 
-        float listY = y + barH + 12;
-        float listH = h - barH - 12;
+        float listY = y + toolbarH + 12;
+        float listH = h - toolbarH - 12;
         ui.panel(x, listY, w, listH, 10, Ui.BASE, Ui.LINE);
         float padX = 14;
         float innerX = x + padX;
@@ -111,17 +149,21 @@ final class ChatView {
         float innerH = listH - 12;
 
         layout(ui, innerW);
+        if (pendingMatchStart >= 0) {
+            jumpToPendingMatch(innerH);
+        }
 
         // Scrolling: the wheel moves three lines at a time.
         float lh = ui.lineHeight(ui.regular, TEXT);
         scroll += ui.takeScroll(x, listY, w, listH) * lh * 3;
         float maxScroll = Math.max(0, total - innerH);
         scroll = Math.max(0, Math.min(scroll, maxScroll));
-        history.readingOlder = scroll > 0;
+        history.readingOlder = scroll > 0 || pendingMatchStart >= 0;
+        history.retainingForSearch = pendingMatchStart >= 0 || activeMatchStart >= 0 && scroll > 0;
 
         // Content shorter than the view sits at the top; otherwise the bottom follows scroll.
         float viewTop = total <= innerH ? 0 : total - innerH - scroll;
-        if (results == null && !searching && viewTop < innerH && history.hasOlder) {
+        if (viewTop < innerH && history.hasOlder) {
             history.loadOlder();
         }
 
@@ -160,7 +202,10 @@ final class ChatView {
             return;
         }
         boolean hot = inList && ui.hover(x - 6, y, w + 12, row.h);
-        if (hot) {
+        boolean activeMatch = row.line.start >= 0 && row.line.start == activeMatchStart;
+        if (activeMatch) {
+            ui.round(x - 6, y, w + 12, row.h, 5, Ui.ACCENT_SOFT);
+        } else if (hot) {
             ui.round(x - 6, y, w + 12, row.h, 5, Ui.RAISED);
         }
         ui.text(ui.regular, 12, x, y + (lh - ui.lineHeight(ui.regular, 12)) / 2 + 1, Ui.FAINT, row.time);
@@ -233,13 +278,103 @@ final class ChatView {
             history.cancelSearch();
             searching = false;
             results = null;
+            activeMatchStart = -1;
+            pendingMatchStart = -1;
+            pendingMatchLine = null;
+            history.retainingForSearch = false;
             return;
         }
+        results = null;
+        activeMatchStart = -1;
+        pendingMatchStart = -1;
+        pendingMatchLine = null;
+        history.retainingForSearch = false;
         searching = true;
         history.search(activeQuery, found -> {
             searching = false;
             results = found;
+            List<ChatHistory.Line> matches = visibleMatches();
+            if (matches.isEmpty()) {
+                activeMatchStart = -1;
+            } else {
+                selectMatch(matches.get(matches.size() - 1));
+            }
         });
+    }
+
+    private List<ChatHistory.Line> visibleMatches() {
+        if (results == null) {
+            return NONE;
+        }
+        String name = player.value().trim().toLowerCase(Locale.ROOT);
+        if (filter == 0 && name.isEmpty()) {
+            return results;
+        }
+        String key = filter + "\n" + name;
+        if (results == searchFilteredBase && results.size() == searchFilteredSize && key.equals(searchFilteredKey)) {
+            return searchFiltered;
+        }
+        List<ChatHistory.Line> out = new ArrayList<>();
+        String me = overlay.username();
+        for (ChatHistory.Line line : results) {
+            if (passesFilters(line, name, me)) {
+                out.add(line);
+            }
+        }
+        searchFiltered = out;
+        searchFilteredBase = results;
+        searchFilteredSize = results.size();
+        searchFilteredKey = key;
+        return out;
+    }
+
+    private static boolean containsStart(List<ChatHistory.Line> lines, long start) {
+        for (ChatHistory.Line line : lines) {
+            if (line.start == start) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void navigateMatch(int direction, List<ChatHistory.Line> matches) {
+        int current = -1;
+        for (int i = 0; i < matches.size(); i++) {
+            if (matches.get(i).start == activeMatchStart) {
+                current = i;
+                break;
+            }
+        }
+        int next = current < 0 ? (direction < 0 ? matches.size() - 1 : 0)
+                : Math.floorMod(current + direction, matches.size());
+        selectMatch(matches.get(next));
+    }
+
+    private void selectMatch(ChatHistory.Line line) {
+        activeMatchStart = line.start;
+        pendingMatchStart = line.start;
+        pendingMatchLine = line;
+        history.retainingForSearch = true;
+    }
+
+    private void jumpToPendingMatch(float innerH) {
+        for (Row row : rows) {
+            if (row.header == null && row.line.start == pendingMatchStart) {
+                float viewTop = Math.max(0, row.y + row.h / 2 - innerH / 2);
+                scroll = Math.max(0, total - innerH - viewTop);
+                pendingMatchStart = -1;
+                pendingMatchLine = null;
+                return;
+            }
+        }
+        if (!history.lines.isEmpty() && pendingMatchStart < history.lines.get(0).start && history.hasOlder) {
+            history.readingOlder = true;
+            history.loadOlder();
+        } else if (pendingMatchLine != null) {
+            history.loadMatch(pendingMatchLine);
+        } else {
+            pendingMatchStart = -1;
+        }
     }
 
     /**
@@ -248,8 +383,8 @@ final class ChatView {
      * rebuild everything, which keeps the distance from the bottom and so the reading position.
      */
     private void layout(Ui ui, float width) {
-        List<ChatHistory.Line> source = results != null ? results : searching ? NONE : history.lines;
-        int version = results != null ? 0 : history.version;
+        List<ChatHistory.Line> source = history.lines;
+        int version = history.version;
         source = filter(source, version);
         // The header above the first message ("no messages yet") changes with it, so start over then.
         boolean sameShape = source == laidOut && width == laidOutWidth && ui.scale == laidOutScale && laidOutCount > 0;
@@ -269,9 +404,7 @@ final class ChatView {
             total = 0;
             lastServer = null;
             lastDay = null;
-            String top = searching ? null
-                    : results != null ? (results.isEmpty() ? strings.get("chat.notFound") : strings.format("chat.found", results.size()))
-                    : history.hasOlder ? strings.get("chat.older")
+            String top = history.hasOlder ? strings.get("chat.older")
                     : history.lines.isEmpty() ? strings.get("chat.empty") : strings.get("chat.start");
             if (top != null) {
                 addHeader(top, null);
@@ -323,16 +456,9 @@ final class ChatView {
         List<ChatHistory.Line> out = new ArrayList<>();
         String me = overlay.username();
         for (ChatHistory.Line line : base) {
-            if (filter == 1 && !Overlay.mentions(line.text, me)) {
-                continue;
+            if (passesFilters(line, name, me)) {
+                out.add(line);
             }
-            if (filter == 2 && !isPrivate(line.text)) {
-                continue;
-            }
-            if (!name.isEmpty() && !fromPlayer(line.text, name)) {
-                continue;
-            }
-            out.add(line);
         }
         filtered = out;
         filteredBase = base;
@@ -340,6 +466,12 @@ final class ChatView {
         filteredSize = base.size();
         filteredKey = key;
         return out;
+    }
+
+    private boolean passesFilters(ChatHistory.Line line, String name, String me) {
+        return (filter != 1 || Overlay.mentions(line.text, me))
+                && (filter != 2 || isPrivate(line.text))
+                && (name.isEmpty() || fromPlayer(line.text, name));
     }
 
     static boolean isPrivate(String text) {

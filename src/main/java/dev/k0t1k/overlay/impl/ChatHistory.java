@@ -12,6 +12,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.TreeMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
@@ -45,6 +46,8 @@ final class ChatHistory {
         final String text;
         /** Where the line's row starts in the store, or -1 when unknown; set before the line is published. */
         long start = -1;
+        /** First byte after this line's stored row. */
+        long end = -1;
 
         Line(long time, String server, String text) {
             this.time = time;
@@ -71,6 +74,9 @@ final class ChatHistory {
     boolean loadingOlder;
     /** The chat view is scrolled up, reading older messages; set by the view on the render thread. */
     boolean readingOlder;
+    /** Keep a selected search result in memory while the matching history page is found and viewed. */
+    boolean retainingForSearch;
+    private boolean loadingMatch;
     private boolean loaded;
     private long olderEnd;
     private volatile int searchGeneration;
@@ -125,7 +131,7 @@ final class ChatHistory {
 
     /** Asks for the page of messages before the oldest loaded one. */
     void loadOlder() {
-        if (!loaded || !hasOlder || loadingOlder) {
+        if (!loaded || !hasOlder || loadingOlder || loadingMatch) {
             return;
         }
         loadingOlder = true;
@@ -167,16 +173,20 @@ final class ChatHistory {
                     ByteArrayOutputStream current = new ByteArrayOutputStream();
                     byte[] buffer = new byte[1 << 16];
                     int counter = 0;
+                    long offset = 0;
                     for (int n; (n = in.read(buffer)) > 0; ) {
                         for (int i = 0; i < n; i++) {
                             if (buffer[i] != '\n') {
                                 current.write(buffer[i]);
                                 continue;
                             }
+                            long lineStart = offset + i - current.size();
                             Line line = decode(new String(current.toByteArray(), StandardCharsets.UTF_8));
                             current.reset();
                             if (line != null && (line.text.toLowerCase(Locale.ROOT).contains(needle)
                                     || line.server.toLowerCase(Locale.ROOT).contains(needle))) {
+                                line.start = lineStart;
+                                line.end = offset + i + 1;
                                 found.addLast(line);
                                 if (found.size() > SEARCH_LIMIT) {
                                     found.removeFirst();
@@ -187,6 +197,7 @@ final class ChatHistory {
                         if (++counter % 16 == 0 && generation != searchGeneration) {
                             return;
                         }
+                        offset += n;
                     }
                 }
             } catch (IOException e) {
@@ -204,6 +215,45 @@ final class ChatHistory {
     /** Cancels the result of a running search. */
     void cancelSearch() {
         searchGeneration++;
+    }
+
+    /** Loads surrounding stored rows for a selected match missing from the loaded messages. */
+    void loadMatch(Line target) {
+        if (!loaded || loadingMatch || loadingOlder || lines.stream().anyMatch(line -> line.start == target.start)) {
+            return;
+        }
+        loadingMatch = true;
+        io.execute(() -> {
+            Chunk page = null;
+            try {
+                page = readBefore(endAfter(target.end, PAGE), PAGE * 2);
+            } catch (IOException | RuntimeException e) {
+                onError.accept(e);
+            } finally {
+                Chunk loaded = page;
+                render.execute(() -> {
+                    loadingMatch = false;
+                    if (loaded != null && !loaded.lines.isEmpty()) {
+                        long previousFirst = lines.isEmpty() ? Long.MAX_VALUE : lines.get(0).start;
+                        TreeMap<Long, Line> merged = new TreeMap<>();
+                        for (Line line : lines) {
+                            merged.put(line.start, line);
+                        }
+                        for (Line line : loaded.lines) {
+                            merged.putIfAbsent(line.start, line);
+                        }
+                        lines.clear();
+                        lines.addAll(merged.values());
+                        if (lines.get(0).start < previousFirst) {
+                            olderEnd = loaded.start;
+                            hasOlder = loaded.start > 0;
+                        }
+                        prepends++;
+                        version++;
+                    }
+                });
+            }
+        });
     }
 
     // ---- io thread ----
@@ -246,6 +296,7 @@ final class ChatHistory {
             for (int i = 0; i < rows.length; i++) {
                 fresh.get(i).start = offset;
                 offset += rows[i].length;
+                fresh.get(i).end = offset;
             }
             commit(read);
             render.execute(() -> {
@@ -269,7 +320,7 @@ final class ChatHistory {
     private void trim() {
         int drop = lines.size() - MAX_LINES;
         // A player reading older messages keeps them, up to a hard limit.
-        if (drop <= PAGE || loadingOlder || readingOlder && lines.size() < MAX_LINES * 3) {
+        if (drop <= PAGE || loadingOlder || retainingForSearch || readingOlder && lines.size() < MAX_LINES * 3) {
             return;
         }
         long start = lines.get(drop).start;
@@ -395,6 +446,28 @@ final class ChatHistory {
         }
     }
 
+    /** Finds the end of up to {@code max} complete stored rows following {@code start}. */
+    private long endAfter(long start, int max) throws IOException {
+        try (RandomAccessFile file = new RandomAccessFile(store.toFile(), "r")) {
+            file.seek(start);
+            byte[] buffer = new byte[1 << 16];
+            long offset = start;
+            long end = start;
+            for (int n; (n = file.read(buffer)) > 0; ) {
+                for (int i = 0; i < n; i++) {
+                    if (buffer[i] == '\n') {
+                        end = offset + i + 1;
+                        if (--max == 0) {
+                            return end;
+                        }
+                    }
+                }
+                offset += n;
+            }
+            return end;
+        }
+    }
+
     /** Reads up to {@code max} whole lines that end at or before byte {@code end} of the store. */
     private Chunk readBefore(long end, int max) throws IOException {
         List<Line> result = new ArrayList<>();
@@ -441,6 +514,7 @@ final class ChatHistory {
                 Line line = decode(new String(acc, span[0], span[1] - span[0], StandardCharsets.UTF_8));
                 if (line != null) {
                     line.start = start + span[0];
+                    line.end = start + span[1] + 1;
                     result.add(line);
                 }
             }

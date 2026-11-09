@@ -7,6 +7,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -16,6 +19,50 @@ import org.junit.jupiter.api.io.TempDir;
 
 /** The chat history keeps a bounded number of messages in memory and pages the rest from its store. */
 class ChatHistoryTest {
+    @Test
+    void searchKeepsStoreOffsetsAcrossBufferBoundariesAndDuplicateMessages(@TempDir Path dir) throws Exception {
+        Path store = dir.resolve("data").resolve("chat-history.tsv");
+        Files.createDirectories(store.getParent());
+        String largeRow = storedRow(1, "server", repeated('x', 65_530) + " λ");
+        String firstMatch = storedRow(2, "server", "needle 😊");
+        String secondMatch = storedRow(3, "server", "needle 😊");
+        byte[] largeBytes = largeRow.getBytes(StandardCharsets.UTF_8);
+        byte[] firstBytes = firstMatch.getBytes(StandardCharsets.UTF_8);
+        Files.write(store, largeRow.getBytes(StandardCharsets.UTF_8));
+
+        ScheduledExecutorService io = Executors.newSingleThreadScheduledExecutor();
+        try {
+            CompletableFuture<List<ChatHistory.Line>> completion = new CompletableFuture<>();
+            ChatHistory history = new ChatHistory(dir.resolve("game"), dir.resolve("data"), io, io,
+                    Runnable::run, completion::completeExceptionally);
+            history.start();
+            settle(io);
+            settle(io);
+
+            String after = storedRow(4, "server", "following context");
+            Files.write(store, (firstMatch + secondMatch + after).getBytes(StandardCharsets.UTF_8), StandardOpenOption.APPEND);
+            history.search("needle", completion::complete);
+            List<ChatHistory.Line> found = completion.get(10, TimeUnit.SECONDS);
+
+            assertEquals(2, found.size());
+            assertEquals(largeBytes.length, found.get(0).start);
+            assertEquals(largeBytes.length + firstBytes.length, found.get(1).start);
+            history.loadMatch(found.get(0));
+            settle(io);
+            assertEquals(4, history.lines.size());
+            assertEquals("following context", history.lines.get(3).text);
+            history.loadMatch(found.get(1));
+            settle(io);
+
+            assertEquals(4, history.lines.size());
+            assertEquals(found.get(0).start, history.lines.get(1).start);
+            assertEquals(found.get(1).start, history.lines.get(2).start);
+            assertTrue(found.get(0).start != found.get(1).start);
+        } finally {
+            io.shutdownNow();
+        }
+    }
+
     @Test
     void longSessionsDropTheOldestAndLoadThemBackFromTheStore(@TempDir Path dir) throws Exception {
         Path game = dir.resolve("game");
@@ -64,5 +111,17 @@ class ChatHistoryTest {
         Path file = game.resolve("logs").resolve("latest.log");
         Files.createDirectories(file.getParent());
         Files.write(file, log.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String storedRow(long time, String server, String text) {
+        return time + "\t" + ChatHistory.escape(server) + "\t" + ChatHistory.escape(text) + "\n";
+    }
+
+    private static String repeated(char c, int count) {
+        StringBuilder text = new StringBuilder(count);
+        for (int i = 0; i < count; i++) {
+            text.append(c);
+        }
+        return text.toString();
     }
 }

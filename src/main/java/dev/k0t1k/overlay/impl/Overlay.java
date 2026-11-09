@@ -1081,6 +1081,8 @@ public final class Overlay implements Function<Object[], Object> {
         for (Runnable task; (task = renderQueue.poll()) != null; ) {
             task.run();
         }
+        // Only the visible chat view may hold old search context past the usual memory limit.
+        chat.retainingForSearch = false;
         long now = System.currentTimeMillis();
         tickWorld(now);
         if (captureAvailable()) {

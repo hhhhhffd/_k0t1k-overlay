@@ -69,6 +69,8 @@ final class Strings {
         add("chat.notFound", "Nothing found", "Ничего не найдено");
         add("chat.searching", "Searching…", "Ищу…");
         add("chat.found", "%d found", "Найдено: %d");
+        add("chat.previousMatch", "‹", "‹");
+        add("chat.nextMatch", "›", "›");
         add("chat.count", "%d loaded", "Загружено: %d");
         add("chat.older", "Loading older messages…", "Загружаю старые сообщения…");
         add("chat.start", "Beginning of history", "Начало истории");
