@@ -110,6 +110,8 @@ final class Ui {
     final List<int[]> keys = new ArrayList<>(); // {key, mods} for presses and repeats
     final StringBuilder chars = new StringBuilder();
     private long lastClickTime;
+    private float lastClickX;
+    private float lastClickY;
 
     /** The slider being dragged (the id it was given), or null. */
     private Object dragging;
@@ -137,6 +139,9 @@ final class Ui {
         if (button < 0 || button >= buttonDown.length) {
             return;
         }
+        if (buttonDown[button] == press) {
+            return;
+        }
         buttonDown[button] = press;
         if (press) {
             pressedButton = button;
@@ -161,8 +166,11 @@ final class Ui {
         }
         if (press) {
             long now = System.currentTimeMillis();
-            doubleClicked = now - lastClickTime < 350;
+            doubleClicked = lastClickTime != 0 && now - lastClickTime < 350
+                    && Math.abs(mouseX - lastClickX) <= 4 && Math.abs(mouseY - lastClickY) <= 4;
             lastClickTime = now;
+            lastClickX = mouseX;
+            lastClickY = mouseY;
             clicked = true;
             mouseDown = true;
         } else {

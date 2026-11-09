@@ -255,7 +255,7 @@ public final class Overlay implements Function<Object[], Object> {
                 case "glfwSetScrollCallback": {
                     glfw.window = (Long) args[0];
                     platform = glfw;
-                    Object wrapped = args[1] == null ? null : glfw.wrap(method, args[1]);
+                    Object wrapped = glfw.wrap(method, args[1]);
                     if (wrapped == args[1]) {
                         return null;
                     }

@@ -5,6 +5,8 @@ import java.nio.ByteOrder;
 import java.nio.DoubleBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.glfw.GLFWCharCallbackI;
@@ -35,6 +37,8 @@ final class GlfwPlatform implements Platform {
      * from inside another one; only the outermost one may offer the event to the overlay.
      */
     private int depth;
+    /** Prefer the plain character callback when GLFW has both Unicode callbacks installed. */
+    private final Set<Long> charCallbacks = ConcurrentHashMap.newKeySet();
 
     private final IntBuffer w = ints();
     private final IntBuffer h = ints();
@@ -184,6 +188,13 @@ final class GlfwPlatform implements Platform {
      * decides the type, since one object may implement several callback interfaces.
      */
     Object wrap(String setter, Object callback) {
+        if ("glfwSetCharCallback".equals(setter)) {
+            if (callback == null) {
+                charCallbacks.remove(window);
+            } else if (callback instanceof GLFWCharCallbackI) {
+                charCallbacks.add(window);
+            }
+        }
         if ("glfwSetKeyCallback".equals(setter) && callback instanceof GLFWKeyCallbackI) {
             final GLFWKeyCallbackI game = (GLFWKeyCallbackI) callback;
             return (GLFWKeyCallbackI) (win, key, scancode, action, mods) -> {
@@ -195,7 +206,9 @@ final class GlfwPlatform implements Platform {
         if ("glfwSetCharModsCallback".equals(setter) && callback instanceof GLFWCharModsCallbackI) {
             final GLFWCharModsCallbackI game = (GLFWCharModsCallbackI) callback;
             return (GLFWCharModsCallbackI) (win, codepoint, mods) -> {
-                if (!offer(() -> overlay.character(codepoint))) {
+                // GLFW emits the same character through both callbacks. Consume this copy while
+                // open, but let the game's callback keep its usual behaviour while closed.
+                if (!offer(() -> charCallbacks.contains(win) ? overlay.isOpen() : overlay.character(codepoint))) {
                     pass(() -> game.invoke(win, codepoint, mods));
                 }
             };
