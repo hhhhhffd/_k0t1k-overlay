@@ -70,8 +70,12 @@ button is hidden and deaths are not counted. Advancements are read from the chat
   `jcef-natives-*` (jcefmaven's builds) from Maven Central, checks each against the SHA-256 pinned in
   the code and unpacks them into `<dataDir>/browser`. The bridge (`src/cef`: `OverlayBrowser`, a
   `CefBrowser_N` that keeps its pixels instead of painting into AWT, and `CefEngine`) ships inside the
-  agent as `cef-bridge.jar` and loads next to JCEF in a class loader of its own. Windows and Linux on
-  x64; the page is drawn by the OpenGL 3.2 and Vulkan renderers (not on LWJGL 2). CEF needs `--no-first-run` off screen: its EULA
+  agent as `cef-bridge.jar` and loads next to JCEF in a class loader of its own. Native downloads are
+  available for Windows/Linux x64 and macOS Intel/Apple Silicon (selected by the JVM architecture,
+  including Intel JVMs under Rosetta). macOS keeps a separate native folder per architecture and uses
+  the distribution's framework and helper app bundles; in-game startup, input and Cocoa/GLFW event-loop
+  coexistence still need verification on a real Mac. The page is drawn by the OpenGL 3.2 and Vulkan
+  renderers (not on LWJGL 2). CEF needs `--no-first-run` off screen: its EULA
   dialog would otherwise end the browser process with exit code 28. "Import sign-ins" (Settings → Browser) copies cookies for an
   allowlisted domain list (editable there) from a detected Firefox or Chromium-family profile into the tab, via a hand-written
   read-only SQLite reader (`SqliteReader`, with Firefox's WAL overlay) and `BrowserLogins`'s decryption of Chromium's cookie store

@@ -277,6 +277,9 @@ public final class CefEngine implements BrowserEngine {
     private static CefApp start(File dir, File cache, String language) {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         boolean windows = os.startsWith("windows");
+        boolean mac = os.startsWith("mac");
+        File helper = new File(dir, windows ? "jcef_helper.exe"
+                : mac ? "jcef Helper.app/Contents/MacOS/jcef Helper" : "jcef_helper");
         // The first run would show Chromium's EULA dialog, which cannot open off screen (exit code 28).
         // The renderers are never hidden or occluded, but Chromium may still lower the priority of ones
         // that draw rarely (the closed overlay paints at 1 fps) and throttle their timers, which
@@ -287,38 +290,52 @@ public final class CefEngine implements BrowserEngine {
         if (!windows) {
             args.add("--no-sandbox");
         }
+        if (mac) {
+            // Maven's distribution keeps the framework and helper bundles beside libjcef.dylib,
+            // rather than in the enclosing application's Contents/Frameworks directory.
+            args.add("--framework-dir-path=" + new File(dir, "Chromium Embedded Framework.framework").getAbsolutePath());
+            args.add("--main-bundle-path=" + new File(dir, "jcef Helper.app").getAbsolutePath());
+            args.add("--browser-subprocess-path=" + helper.getAbsolutePath());
+        }
         String[] argv = args.toArray(new String[0]);
         // Libraries are loaded below by absolute path; JCEF's own loader would search java.library.path.
         SystemBootstrap.setLoader(name -> { });
-        if (windows) {
+        if (windows || mac) {
             try {
                 System.loadLibrary("jawt");
             } catch (UnsatisfiedLinkError e) {
                 System.err.println("[k0t1k-overlay] browser: no jawt (" + e.getMessage() + "), going on");
             }
+        }
+        if (windows) {
             System.load(new File(dir, "chrome_elf.dll").getAbsolutePath());
             System.load(new File(dir, "libcef.dll").getAbsolutePath());
             System.load(new File(dir, "jcef.dll").getAbsolutePath());
         } else {
-            System.load(new File(dir, "libjcef.so").getAbsolutePath());
+            System.load(new File(dir, mac ? "libjcef.dylib" : "libjcef.so").getAbsolutePath());
             if (!CefApp.startup(argv)) {
                 throw new IllegalStateException("CEF did not start");
             }
-            System.load(new File(dir, "libcef.so").getAbsolutePath());
+            if (!mac) {
+                System.load(new File(dir, "libcef.so").getAbsolutePath());
+            }
         }
         CefSettings settings = new CefSettings();
         settings.windowless_rendering_enabled = true;
-        settings.browser_subprocess_path = new File(dir, windows ? "jcef_helper.exe" : "jcef_helper").getAbsolutePath();
-        settings.resources_dir_path = dir.getAbsolutePath();
-        settings.locales_dir_path = new File(dir, "locales").getAbsolutePath();
+        settings.browser_subprocess_path = helper.getAbsolutePath();
+        if (!mac) {
+            // On macOS CEF finds resources and locales inside the framework bundle.
+            settings.resources_dir_path = dir.getAbsolutePath();
+            settings.locales_dir_path = new File(dir, "locales").getAbsolutePath();
+        }
         settings.root_cache_path = cache.getAbsolutePath();
         settings.persist_session_cookies = true;
         settings.locale = language;
         settings.log_file = new File(cache, "cef.log").getAbsolutePath();
         settings.log_severity = CefSettings.LogSeverity.LOGSEVERITY_WARNING;
         CefApp instance = CefApp.getInstance(argv, settings);
-        // Off screen, JCEF runs CEF with an external message pump on the AWT thread: CEF asks for work
-        // through onScheduleMessagePumpWork, and this first call starts the cycle.
+        // Off screen, JCEF schedules work through AWT (dispatching to the Cocoa main thread on
+        // macOS). This first call starts the message pump.
         instance.doMessageLoopWork(0);
         return instance;
     }

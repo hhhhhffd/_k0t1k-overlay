@@ -39,6 +39,8 @@ final class Browser {
     private static final String[][] NATIVES = {
         {"windows-amd64", "0dc2ce28766d267f551398e24af7a9bec244b888e651bd97a14ac2d128550875", "171"},
         {"linux-amd64", "83f427992cd783fb6f3d499fdf275675187818aa7ca9c4a2a4d43af534a8bdfc", "152"},
+        {"macosx-amd64", "0a49f85ebc8f942fae81bc0120950ce83a629696352338f000856ee72580908a", "154"},
+        {"macosx-arm64", "685b27b3dc7f6899a7d4a3a3d58978c95c36ebd1afd571c7027a66fe6f1252a0", "142"},
     };
 
     volatile State state;
@@ -61,10 +63,12 @@ final class Browser {
     Browser(Path dataDir, Executor io, String language, Protection protection) {
         this.protection = protection;
         this.root = dataDir.resolve("browser");
-        this.natives = root.resolve("cef-152.0.6");
         this.io = io;
         this.language = language;
-        this.platform = platform();
+        this.platform = platform(System.getProperty("os.name", ""), System.getProperty("os.arch", ""));
+        // A Mac can run either an Intel JVM under Rosetta or an ARM JVM against the same data dir.
+        this.natives = root.resolve("cef-152.0.6" + (platform != null && platform[0].startsWith("macosx-")
+                ? "-" + platform[0] : ""));
         if (platform == null) {
             state = State.UNSUPPORTED;
         } else {
@@ -72,13 +76,14 @@ final class Browser {
         }
     }
 
-    private static String[] platform() {
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        String arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
-        if (!arch.equals("amd64") && !arch.equals("x86_64")) {
-            return null;
-        }
-        String name = os.startsWith("windows") ? "windows-amd64" : os.startsWith("linux") ? "linux-amd64" : null;
+    static String[] platform(String os, String arch) {
+        os = os.toLowerCase(Locale.ROOT);
+        arch = arch.toLowerCase(Locale.ROOT);
+        String system = os.startsWith("windows") ? "windows" : os.startsWith("linux") ? "linux"
+                : os.startsWith("mac") ? "macosx" : "";
+        String cpu = arch.equals("amd64") || arch.equals("x86_64") ? "amd64"
+                : arch.equals("aarch64") || arch.equals("arm64") ? "arm64" : "";
+        String name = system + "-" + cpu;
         for (String[] entry : NATIVES) {
             if (entry[0].equals(name)) {
                 return entry;

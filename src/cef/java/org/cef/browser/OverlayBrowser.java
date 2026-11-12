@@ -140,7 +140,7 @@ public final class OverlayBrowser extends CefBrowser_N implements CefRenderHandl
 
     public void key(int id, int keyCode, char keyChar, int modifiers) {
         char chr = keyChar;
-        if (!WINDOWS && id != KeyEvent.KEY_TYPED && chr == KeyEvent.CHAR_UNDEFINED) {
+        if (LINUX && id != KeyEvent.KEY_TYPED && chr == KeyEvent.CHAR_UNDEFINED) {
             // On Linux JCEF takes the key from the key code only for a few keys and from the character
             // for the rest, so these ones are passed as the X keysym that Chromium maps back.
             chr = keysym(keyCode, chr);
@@ -153,6 +153,7 @@ public final class OverlayBrowser extends CefBrowser_N implements CefRenderHandl
     }
 
     private static final boolean WINDOWS = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).startsWith("windows");
+    private static final boolean LINUX = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).startsWith("linux");
     // sun.misc.Unsafe by reflection: --release 8 hides it from the compiler, and no --add-opens is needed.
     private static final Object UNSAFE;
     private static final java.lang.reflect.Method PUT_LONG;

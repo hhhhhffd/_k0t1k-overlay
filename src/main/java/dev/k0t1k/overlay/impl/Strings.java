@@ -218,7 +218,8 @@ final class Strings {
         add("browser.loading", "Loading…", "Загрузка…");
         add("browser.failed", "The browser failed: %s", "Браузер не запустился: %s");
         add("browser.retry", "Try again", "Попробовать снова");
-        add("browser.unsupported", "The browser needs Windows or Linux on x64", "Браузеру нужен Windows или Linux на x64");
+        add("browser.unsupported", "The browser needs Windows/Linux on x64 or macOS on Intel/Apple Silicon",
+                "Браузеру нужен Windows/Linux на x64 или macOS на Intel/Apple Silicon");
         add("browser.unsupportedRenderer", "The browser cannot draw with this game's renderer",
                 "Браузер не умеет рисоваться рендерером этой игры");
         add("browser.newTab", "New tab", "Новая вкладка");
